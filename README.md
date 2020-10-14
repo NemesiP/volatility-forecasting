@@ -1,1 +1,1 @@
-#volatility-forecasting
+This is a thesis project
