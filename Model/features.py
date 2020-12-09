@@ -45,7 +45,7 @@ class FeaturesManipulation:
                 pass
         return pd.DataFrame(dd).T
     
-    def build_Lag(s, lag=2, dropna=True):
+    def build_lag(s, lag=2, dropna=True):
         if type(s) is pd.DataFrame:
             new_dict = {}
             for col_name in s:
