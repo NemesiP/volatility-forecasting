@@ -100,29 +100,37 @@ class GARCH11(object):
         return print('Loglikelihood:', llf, '\nAIC: ', AIC, '\nBIC: ', BIC, '\n'), display(table)
 
 class GARCH11_sim(object):
-    def __init__(self, params, num, display = False):
-        self.params = params
+    def __init__(self, params, num, display = False, distribution = 'Normal'):
+        self.dist = distribution
         self.num = num
         self.display = display
+        self.params = params
+        if self.dist == 'Student-t':
+            self.df = float(input('Please add the degree of freedom: '))
         self.sigma2, self.returns = self.garch_sim()
+
         
     def garch_sim(self):
         y = np.zeros(self.num)
         state = np.zeros(self.num)
         for i in range(self.num):
             if i == 0:
-                state[i] = np.divide(np.take(self.params, 0, -1), (1 - np.take(self.params, 1, -1) - np.take(self.params, 2, -1)))
+                state[i] = np.divide(np.take(self.params, 1, -1), (1 - np.take(self.params, 2, -1) - np.take(self.params, 3, -1)))
             else:
-                state[i] = np.take(self.params, 0, -1) + np.take(self.params, 1, -1) * y[i-1] ** 2.0 + np.take(self.params, 2, -1) * state[i - 1]
+                state[i] = np.take(self.params, 1, -1) + np.take(self.params, 2, -1) * y[i-1] ** 2.0 + np.take(self.params, 3, -1) * state[i - 1]
             if display == True:
                 print('State at {} is {}'.format(i, state[i]))
-            y[i] = stats.norm.rvs(scale = np.sqrt(state[i]))
+            if self.dist == 'Normal':
+                y[i] = stats.norm.rvs(loc = np.take(self.params, 0, -1), scale = np.sqrt(state[i]))
+            elif self.dist == 'Student-t':
+                y[i] = stats.t.rvs(self.df, loc = np.take(self.params, 0, -1), scale = np.sqrt(state[i]))
+                
         return state, y
 
 if __name__ == '__main__':
     np.random.seed(14)
 
-    optimal_params = np.array([0.2, 0.2, 0.6])
+    optimal_params = np.array([0.0, 0.2, 0.2, 0.6])
     simulate = GARCH11_sim(optimal_params, 1000)
 
     init_params = np.array([0.05, 0.1, 0.05, 0.92])
