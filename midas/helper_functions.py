@@ -46,9 +46,14 @@ def create_matrix(data, lag):
     """
     ## Létrehozok egy dictionary-t, amibe fognak kerülni a magyarázóváltozóim késletetéseinek mátrixa.
     X = {}
-    
+            
     ## Annyiszor végezzük el a ciklust, ahány oszlopa van a dataframe-nek.
     for i in range(1, len(data.columns) + 1):
+        if isinstance(lag, int) or isinstance(lag, float):
         ## A dictionary-be belehelyzem ezeket a mátrixokat, és létrehozok hozzájuk egy kulcsot [X1, ..., Xn], amikkel megtudom hívni ezeket.
-        X['X{num}'.format(num = i)] = create_lagged_variable(data.iloc[:, i - 1], data.columns[i - 1], lag).iloc[:, -lag:].values
+            X['X{num}'.format(num = i)] = create_lagged_variable(data.iloc[:, i - 1], data.columns[i - 1], lag).iloc[:, -lag:].values
+        elif isinstance(lag, list) or isinstance(lag, np.ndarray):
+            X['X{num}'.format(num = i)] = create_lagged_variable(data.iloc[:, i - 1], data.columns[i - 1], lag[i - 1]).iloc[:, -lag[i - 1]:].values
+        else:
+            raise ValueError("ValueError exception thrown")
     return X
