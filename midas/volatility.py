@@ -7,7 +7,7 @@ Created on Tue Feb 23 11:50:49 2021
 import numpy as np
 from base import BaseModel
 from stats import loglikelihood_normal, loglikelihood_student_t
-from weights import WeightMethod
+from weights import beta_
 from helper_functions import create_matrix
 import scipy.stats as stats
 
@@ -55,7 +55,8 @@ class MIDAS(BaseModel):
         """
         model = params[0]
         for i in range(1, len(x) + 1):
-            model += params[2 * i - 1] * WeightMethod().x_weighted_beta(x['X{num}'.format(num = i)], [1.0, params[2 * i]])
+#            model += params[2 * i - 1] * WeightMethod().x_weighted_beta(x['X{num}'.format(num = i)], [1.0, params[2 * i]])
+            model += params[2 * i - 1] * beta_().x_weighted(x['X{num}'.format(num = i)], [1.0, params[2 * i]])
         
         return model
     
