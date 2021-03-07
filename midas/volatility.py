@@ -162,5 +162,75 @@ class T_GARCH(BaseModel):
         return self.model_filter(self.optimized_params, X)
     
 class GARCH_MIDAS(BaseModel):
-    #To-Do
-    pass
+    def __init__(self, lag = 22, *args):
+        self.lag = lag
+        self.args = args
+        
+    def initialize_params(self, X):
+        garch_params = np.array([0.05, 0.05, 0.02, 0.95])
+        midas_params = np.array([1.0])
+        for i in range(X.shape[1]):
+            ratio = X.iloc[:, i].unique().shape[0] / X.shape[0]
+            if ratio <= 0.05:
+                midas_params = np.append(midas_params, [1.0])
+            else:
+                midas_params = np.append(midas_params, [1.0, 1.0])
+        
+        self.init_params = np.append(garch_params, midas_params)
+        return self.init_params
+    
+    def model_filter(self, params, X, y):
+        g = np.zeros(len(y))
+        resid = y - params[0]
+        sigma2 = np.zeros(len(y))
+        
+        per = X.index.to_period('M')
+        uniq = np.asarray(per.unique())
+        
+        self.tau = np.zeros(len(uniq))
+        
+        uncond_var = params[1] / (1 - params[2] - params[3])
+        
+        plc = []
+        
+        for t in range(len(uniq)):
+            if t != len(uniq) - 1:
+                plc.append(np.where((per >= uniq[t].strftime('%Y-%m')) & (per < uniq[t + 1].strftime('%Y-%m')))[0])
+                dd = X.iloc[plc[t], :].values
+                if len(dd) < self.lag:
+                    pad = np.zeros((self.lag - len(dd), dd.shape[1]))
+                    new_d = np.vstack([dd[::-1], pad]).T
+                else:
+                    new_d = dd[len(dd) - self.lag:][::-1].T
+            else:
+                plc.append(np.where(per >= uniq[t].strftime('%Y-%m'))[0])
+                dd = X.iloc[plc[t], :].values
+                if len(dd) < self.lag:
+                    pad = np.zeros((self.lag - len(dd), dd.shape[1]))
+                    new_d = np.vstack([dd[::-1], pad]).T
+                else:
+                    new_d = dd[len(dd) - self.lag:][::-1].T
+                    
+            self.tau[t] = params[4]
+            for i in range(len(new_d)):
+                x = new_d[i].reshape((1, self.lag))
+                if x.std() > 1e-6:
+                    self.tau[t] += params[5 + i] * beta_().x_weighted(x, [1.0, params[6 + i]])
+                else:
+                    self.tau[t] += params[6 + i] * x[0][0]
+            for i in plc[t]:
+                if i == 0:
+                    g[i] = uncond_var
+                    sigma2[i] = g[i] * self.tau[t]
+                else:
+                    g[i] = uncond_var * (1 - params[2] - params[3]) + params[2] * ((resid[i-1] ** 2) / self.tau[t]) + params[3] * g[i - 1]
+                    sigma2[i] = g[i] * self.tau[t]
+        return sigma2
+    
+    def loglikelihood(self, params, X, y):
+        sigma2 = self.model_filter(params, X, y)
+        resid = y - params[0]
+        return loglikelihood_normal(resid, sigma2)
+    
+    def predict(self, X, y):
+        return self.model_filter(self.optimized_params, X, y)
