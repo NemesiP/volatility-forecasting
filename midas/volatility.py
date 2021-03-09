@@ -91,7 +91,7 @@ class GARCH(BaseModel):
         self.args = args
         
     def initialize_params(self, y):
-        self.init_params = np.asarray([0.05, 0.1, 0.02, 0.95])
+        self.init_params = np.asarray([0.05, 0.02, 0.95])
         return self.init_params
     
     def model_filter(self, params, y):
@@ -128,7 +128,7 @@ class T_GARCH(BaseModel):
         self.args = args
         
     def initialize_params(self, y):
-        self.init_params = np.asarray([0.05, 0.1, 0.02, 0.95, 3.75])
+        self.init_params = np.asarray([0.1, 0.02, 0.95, 3.75])
         return self.init_params
     
     def model_filter(self, params, y):
@@ -167,15 +167,21 @@ class GARCH_MIDAS(BaseModel):
         self.args = args
         
     def initialize_params(self, X):
+        daily_index = np.array([])
+        monthly_index = np.array([])
         garch_params = np.array([0.05, 0.05, 0.02, 0.95])
         midas_params = np.array([1.0])
         for i in range(X.shape[1]):
             ratio = X.iloc[:, i].unique().shape[0] / X.shape[0]
             if ratio <= 0.05:
                 midas_params = np.append(midas_params, [1.0])
+                monthly_index = np.append(monthly_index, i)
             else:
                 midas_params = np.append(midas_params, [1.0, 1.0])
+                daily_index = np.append(daily_index, i)
         
+        self.monthly = monthly_index
+        self.daily = daily_index
         self.init_params = np.append(garch_params, midas_params)
         return self.init_params
     
@@ -194,9 +200,12 @@ class GARCH_MIDAS(BaseModel):
         plc = []
         
         for t in range(len(uniq)):
-            if t != len(uniq) - 1:
+            if t == 0:
                 plc.append(np.where((per >= uniq[t].strftime('%Y-%m')) & (per < uniq[t + 1].strftime('%Y-%m')))[0])
-                dd = X.iloc[plc[t], :].values
+                new_d = []
+            elif t != len(uniq) - 1:
+                plc.append(np.where((per >= uniq[t].strftime('%Y-%m')) & (per < uniq[t + 1].strftime('%Y-%m')))[0])
+                dd = X.iloc[plc[t - 1], self.daily].values
                 if len(dd) < self.lag:
                     pad = np.zeros((self.lag - len(dd), dd.shape[1]))
                     new_d = np.vstack([dd[::-1], pad]).T
@@ -204,20 +213,20 @@ class GARCH_MIDAS(BaseModel):
                     new_d = dd[len(dd) - self.lag:][::-1].T
             else:
                 plc.append(np.where(per >= uniq[t].strftime('%Y-%m'))[0])
-                dd = X.iloc[plc[t], :].values
+                dd = X.iloc[plc[t - 1], self.daily].values
                 if len(dd) < self.lag:
                     pad = np.zeros((self.lag - len(dd), dd.shape[1]))
                     new_d = np.vstack([dd[::-1], pad]).T
                 else:
                     new_d = dd[len(dd) - self.lag:][::-1].T
-                    
-            self.tau[t] = params[4]
-            for i in range(len(new_d)):
-                x = new_d[i].reshape((1, self.lag))
-                if x.std() > 1e-6:
-                    self.tau[t] += params[5 + i] * beta_().x_weighted(x, [1.0, params[6 + i]])
-                else:
-                    self.tau[t] += params[6 + i] * x[0][0]
+            
+            
+            self.tau[t] = params[4] + np.dot(X.iloc[plc[t], self.monthly].values[0], params[5 : 5 + len(self.monthly)])
+            
+            for j in range(len(new_d)):
+                x = new_d[j].reshape((1, self.lag))
+                self.tau[t] += params[5 + len(self.monthly) + j] * beta_().x_weighted(x, [1.0, params[(5 + len(self.monthly + self.daily) + j)]])
+            
             for i in plc[t]:
                 if i == 0:
                     g[i] = uncond_var
