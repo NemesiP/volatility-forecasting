@@ -167,12 +167,35 @@ class GARCH_MIDAS(BaseModel):
         self.args = args
         
     def initialize_params(self, X):
+        """
+        This function is about to create the initial parameters and
+        collect the indexes of monthly and daily data columns.
+        
+
+        Parameters
+        ----------
+        X : DataFrame
+            Pandas dataframe that contains all the regressors
+
+        Returns
+        -------
+        init_params: numpy.array
+            Numpy array that contain the required amount of initial parameters.
+
+        """
+        # Empty array for the column indexes of daily regressors
         daily_index = np.array([])
+        # Empty array for the column indexes of monthly regressors
         monthly_index = np.array([])
+        # Initial GARCH parameters
         garch_params = np.array([0.05, 0.05, 0.02, 0.95])
+        # An array where there will be the required amount of parameter for the modeling.
         midas_params = np.array([1.0])
         for i in range(X.shape[1]):
+            # Calculate the ratio of unique observation divided by the number of whole observations
             ratio = X.iloc[:, i].unique().shape[0] / X.shape[0]
+            # Let's assume that the ratio for monthly observation will be close to 12/365,
+            # so I set the critial point to 0.05.
             if ratio <= 0.05:
                 midas_params = np.append(midas_params, [1.0])
                 monthly_index = np.append(monthly_index, i)
@@ -186,30 +209,60 @@ class GARCH_MIDAS(BaseModel):
         return self.init_params
     
     def model_filter(self, params, X, y):
-        g = np.zeros(len(y))
+        """
+        This function is about to create the model's equation.
+        The short-/long-term component will be calculated as well.
+
+        Parameters
+        ----------
+        params : numpy.array
+            Numpy array that contain the required amount of parameters.
+        X : DataFrame
+            Pandas dataframe that contains all the regressors
+        y : pandas.Series or numpy.array
+            Sequance that contains the dependent variable.
+
+        Returns
+        -------
+        sigma2 : numpy.array
+            Numpy array that return the values from the specification.
+
+        """
+        # Array of zeros with length of the dependent variable
+        self.g = np.zeros(len(y))
         resid = y - params[0]
         sigma2 = np.zeros(len(y))
-        
-        per = X.index.to_period('M')
-        uniq = np.asarray(per.unique())
-        
-        self.tau = np.zeros(len(uniq))
+        # Empty list to collect the ...
+        plc = []
         
         uncond_var = params[1] / (1 - params[2] - params[3])
         
-        plc = []
+        # 'per' is an array of periods (monthly). For example [(2010, 1), ...]
+        per = X.index.to_period('M')
+        # 'uniq' contains the unique dates (monthly)
+        uniq = np.asarray(per.unique())
+        
+        # Array of zeros with length of the number of unique monthly dates
+        self.tau = np.zeros(len(uniq))
         
         for t in range(len(uniq)):
             if t == 0:
                 plc.append(np.where((per >= uniq[t].strftime('%Y-%m')) & (per < uniq[t + 1].strftime('%Y-%m')))[0])
-                new_d = []
+                # 'new_d' is a empty array if t equal to zero. I will collect daily regressors in 'new_d'
+                # so in the first month I assume didn't have any knowledge about the past.
+                new_d = np.array([])
             elif t != len(uniq) - 1:
                 plc.append(np.where((per >= uniq[t].strftime('%Y-%m')) & (per < uniq[t + 1].strftime('%Y-%m')))[0])
+                # 'dd' contain the values of daily regressors from the previous period.
                 dd = X.iloc[plc[t - 1], self.daily].values
                 if len(dd) < self.lag:
+                    # I create 'pad' variable to build matrixes with the same size. It is a crutial step
+                    # because in january we have more observations than february, so I made an assumption,
+                    # that each month have a length is equal to the size of lag.
                     pad = np.zeros((self.lag - len(dd), dd.shape[1]))
                     new_d = np.vstack([dd[::-1], pad]).T
                 else:
+                    # If we have more observation than lag, I dropped out the last (length - lag)
                     new_d = dd[len(dd) - self.lag:][::-1].T
             else:
                 plc.append(np.where(per >= uniq[t].strftime('%Y-%m'))[0])
@@ -220,20 +273,22 @@ class GARCH_MIDAS(BaseModel):
                 else:
                     new_d = dd[len(dd) - self.lag:][::-1].T
             
-            
+            # First, I added monthly variables to tau and the intercept
             self.tau[t] = params[4] + np.dot(X.iloc[plc[t], self.monthly].values[0], params[5 : 5 + len(self.monthly)])
             
+            # Finally, I added daily observations from t-1 period specfied with Beta function 
             for j in range(len(new_d)):
                 x = new_d[j].reshape((1, self.lag))
                 self.tau[t] += params[5 + len(self.monthly) + j] * beta_().x_weighted(x, [1.0, params[(5 + len(self.monthly + self.daily) + j)]])
             
             for i in plc[t]:
                 if i == 0:
-                    g[i] = uncond_var
-                    sigma2[i] = g[i] * self.tau[t]
+                    self.g[i] = uncond_var
+                    sigma2[i] = self.g[i] * self.tau[t]
                 else:
-                    g[i] = uncond_var * (1 - params[2] - params[3]) + params[2] * ((resid[i-1] ** 2) / self.tau[t]) + params[3] * g[i - 1]
-                    sigma2[i] = g[i] * self.tau[t]
+                    self.g[i] = uncond_var * (1 - params[2] - params[3]) + params[2] * ((resid[i-1] ** 2) / self.tau[t]) + params[3] * self.g[i - 1]
+                    sigma2[i] = self.g[i] * self.tau[t]
+        
         return sigma2
     
     def loglikelihood(self, params, X, y):
