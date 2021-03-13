@@ -58,10 +58,6 @@ class BaseModel(object, metaclass = ABCMeta):
         pass
     
     @abstractmethod
-    def model_filter(self):
-        pass
-    
-    @abstractmethod
     def loglikelihood(self):
         pass
     

@@ -7,7 +7,7 @@ Created on Tue Feb 23 11:50:49 2021
 import numpy as np
 from base import BaseModel
 from stats import loglikelihood_normal, loglikelihood_student_t
-from weights import beta_
+from weights import Beta
 from helper_functions import create_matrix
 import scipy.stats as stats
 
@@ -56,7 +56,7 @@ class MIDAS(BaseModel):
         model = params[0]
         for i in range(1, len(x) + 1):
 #            model += params[2 * i - 1] * WeightMethod().x_weighted_beta(x['X{num}'.format(num = i)], [1.0, params[2 * i]])
-            model += params[2 * i - 1] * beta_().x_weighted(x['X{num}'.format(num = i)], [1.0, params[2 * i]])
+            model += params[2 * i - 1] * Beta().x_weighted(x['X{num}'.format(num = i)], [1.0, params[2 * i]])
         
         return model
     
@@ -279,7 +279,7 @@ class GARCH_MIDAS(BaseModel):
             # Finally, I added daily observations from t-1 period specfied with Beta function 
             for j in range(len(new_d)):
                 x = new_d[j].reshape((1, self.lag))
-                self.tau[t] += params[5 + len(self.monthly) + j] * beta_().x_weighted(x, [1.0, params[(5 + len(self.monthly + self.daily) + j)]])
+                self.tau[t] += params[5 + len(self.monthly) + j] * Beta().x_weighted(x, [1.0, params[(5 + len(self.monthly + self.daily) + j)]])
             
             for i in plc[t]:
                 if i == 0:
@@ -298,3 +298,96 @@ class GARCH_MIDAS(BaseModel):
     
     def predict(self, X, y):
         return self.model_filter(self.optimized_params, X, y)
+    
+class MGARCH(BaseModel):
+    def __init__(self, lag = 12, *args):
+        self.lag = lag
+        self.args = args
+
+    def initialize_params(self, X):
+        garch_params = np.array([0.05, 0.1, 0.1, 0.85])
+        midas_params = np.array([0.5, 0.1, 1.0])
+        """
+        try:
+            X_len = X.shape[1]
+        except:
+            X_len = 1
+        
+        for i in range(X_len):
+            midas_params = np.append(midas_params, [1.0, 1.0])
+        """
+        self.init_params = np.append(garch_params, midas_params)
+        return self.init_params
+
+    def model_filter(self, params, X, y):
+        self.g = np.zeros(len(y))
+        self.tau = np.zeros(len(X))
+        sigma2 = np.zeros(len(y))
+        
+        mu, alpha0, alpha1, beta1 = params[0], params[1], params[2], params[3]
+        
+        resid = y - mu
+        uncond_var = alpha0 / (1 - alpha1 - beta1)
+
+        for t in range(len(X)):
+            if t == 0:
+                m = np.where(y.index < X.index[t])[0]
+            else:
+                m = np.where((y.index < X.index[t]) & (y.index >= X.index[t - 1]))[0]
+            
+            if t - self.lag < 0:
+                self.tau[t] = params[4] + params[5] * Beta().x_weighted(X[:t].values.T, [1.0, params[6]])
+            else:
+                self.tau[t] = params[4] + params[5] * Beta().x_weighted(X[t - self.lag : t].values.T, [1.0, params[6]])
+            
+            for i in m:
+                if t == 0:
+                    if i == 0:
+                        self.g[i] = uncond_var
+                    else:
+                        self.g[i] = uncond_var * (1 - alpha1 - beta1) + alpha1 * resid[i - 1] ** 2 + beta1 * self.g[i - 1]
+                    sigma2[i] = self.g[i]
+                else:
+                    self.g[i] = uncond_var * (1 - alpha1 - beta1) + alpha1 * (resid[i - 1] ** 2) / self.tau[t] + beta1 * self.g[i - 1]
+                    sigma2[i] = self.g[i] * self.tau[t]
+                    
+        return sigma2
+    
+    def loglikelihood(self, params, X, y):
+        sigma2 = self.model_filter(params, X, y)
+        resid = y - params[0]
+        return loglikelihood_normal(resid, sigma2)
+    
+    def predict(self, X, y):
+        return self.model_filter(self.optimized_params, X, y)
+    
+    def simulate(self, params = [0.0, 0.1, 0.2, 0.6, 0.4, 0.005, 1.0], lag = 12, num = 100):
+        rv = np.zeros(num)
+        tau = np.zeros(num)
+        g = np.zeros(num * 22)
+        sigma2 = np.zeros(num * 22)
+        y = np.zeros(num * 22)
+        
+        mu, omega, alpha, beta, m, pszi, theta = params[0], params[1], params[2], params[3], params[4], params[5], params[6]
+        uncond_var = omega / (1 - alpha - beta)
+        
+        for t in range(num):
+            if t - lag < 0:
+                rv[t] = np.sum(y[(t - 1 )* 22 : t * 22] ** 2)
+                tau[t] = m + pszi * Beta().x_weighted(rv[:t].reshape((1, rv[:t].shape[0])), [1.0, theta])
+            else:
+                rv[t] = np.sum(y[(t - 1 )* 22 : t * 22] ** 2)
+                tau[t] = m + pszi * Beta().x_weighted(rv[t - lag : t].reshape((1, rv[t - lag : t].shape[0])), [1.0, theta])
+            for i in range(t * 22, (t + 1) * 22):
+                if t == 0:
+                    if i == 0:
+                        g[i] = uncond_var
+                    else:
+                        g[i] = uncond_var * (1 - alpha - beta) + alpha * (y[i - 1] - mu) ** 2 + beta * g[i - 1]
+                    sigma2[i] = g[i]
+                    y[i] = stats.norm.rvs(loc = params[0], scale = np.sqrt(sigma2[i]))
+                else:
+                    g[i] = uncond_var * (1 - alpha - beta) + alpha * ((y[i - 1] - mu) ** 2) / tau[t] + beta * g[i - 1]
+                    sigma2[i] = g[i] * tau[t]
+                    y[i] = stats.norm.rvs(loc = params[0], scale = np.sqrt(sigma2[i]))
+        return rv, tau, g, sigma2, y
