@@ -86,6 +86,27 @@ class MIDAS(BaseModel):
         X = create_matrix(X, self.lag)
         return self.model_filter(self.optimized_params, X)
     
+    def simulate(self, params = [4.0, 0.1, 5.0], num = 500):
+        m, pszi, theta = params[0], params[1], params[2]
+        tau = np.zeros(num)
+        rv = np.zeros(num)
+        y = np.zeros(num * 22)
+        
+        for t in range(num):
+            if t - self.lag < 0:
+                rv[t] = np.sum(y[(t - 1 )* 22 : t * 22] ** 2)
+                tau[t] = m + pszi * Beta().x_weighted(rv[:t].reshape((1, rv[:t].shape[0])), [1.0, theta])
+            else:
+                rv[t] = np.sum(y[(t - 1 )* 22 : t * 22] ** 2)
+                tau[t] = m + pszi * Beta().x_weighted(rv[t - self.lag : t].reshape((1, rv[t - self.lag : t].shape[0])), [1.0, theta])
+            for i in range(t * 22, (t + 1) * 22):
+                if t == 0:
+                    y[i] = stats.norm.rvs(loc = 0, scale = 1)
+                else:
+                    y[i] = stats.norm.rvs(loc = 0, scale = np.sqrt(tau[t]) / np.sqrt(22))
+        
+        return tau, rv, y
+    
 class GARCH(BaseModel):
     def __init__(self, *args):
         self.args = args
