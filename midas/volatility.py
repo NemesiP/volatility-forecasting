@@ -86,7 +86,7 @@ class MIDAS(BaseModel):
         X = create_matrix(X, self.lag)
         return self.model_filter(self.optimized_params, X)
     
-    def simulate(self, params = [4.0, 0.1, 5.0], num = 500):
+    def simulate(self, params = [4.0, 0.1, 1.0], num = 500):
         m, pszi, theta = params[0], params[1], params[2]
         tau = np.zeros(num)
         rv = np.zeros(num)
