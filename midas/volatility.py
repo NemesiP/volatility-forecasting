@@ -86,6 +86,7 @@ class MIDAS(BaseModel):
         X = create_matrix(X, self.lag)
         return self.model_filter(self.optimized_params, X)
     
+    """
     def simulate(self, params = [4.0, 0.1, 1.0], num = 500):
         m, pszi, theta = params[0], params[1], params[2]
         tau = np.zeros(num)
@@ -94,11 +95,14 @@ class MIDAS(BaseModel):
         
         for t in range(num):
             if t - self.lag < 0:
-                rv[t] = np.sum(y[(t - 1 )* 22 : t * 22] ** 2)
-                tau[t] = m + pszi * Beta().x_weighted(rv[:t].reshape((1, rv[:t].shape[0])), [1.0, theta])
+                if t == 0:
+                    rv[t] = 0.0
+                else:
+                    rv[t] = np.sum(y[(t - 1 )* 22 : t * 22] ** 2)
+                tau[t] = m + pszi * Beta().x_weighted(rv[:t][::-1].reshape((1, rv[:t].shape[0])), [1.0, theta])
             else:
                 rv[t] = np.sum(y[(t - 1 )* 22 : t * 22] ** 2)
-                tau[t] = m + pszi * Beta().x_weighted(rv[t - self.lag : t].reshape((1, rv[t - self.lag : t].shape[0])), [1.0, theta])
+                tau[t] = m + pszi * Beta().x_weighted(rv[t - self.lag : t][::-1].reshape((1, rv[t - self.lag : t].shape[0])), [1.0, theta])
             for i in range(t * 22, (t + 1) * 22):
                 if t == 0:
                     y[i] = stats.norm.rvs(loc = 0, scale = 1)
@@ -106,6 +110,19 @@ class MIDAS(BaseModel):
                     y[i] = stats.norm.rvs(loc = 0, scale = np.sqrt(tau[t]) / np.sqrt(22))
         
         return tau, rv, y
+    """
+    def simulate(self, params = [2.0, 0.5, 5.0], lag = 12, num = 500):
+        y = np.zeros(num)
+        x = np.exp(np.cumsum(np.random.normal(0.5, 2, num) / 100))
+        alpha, beta, theta = params[0], params[1], params[2]
+        
+        for i in range(num):
+            if i < lag:
+                y[i] = alpha
+            else:
+                y[i] = alpha + beta * Beta().x_weighted(x[i - lag : i][::-1].reshape((1, lag)), [1.0, theta])
+        
+        return x, y
     
 class GARCH(BaseModel):
     def __init__(self, *args):
@@ -382,7 +399,7 @@ class MGARCH(BaseModel):
     def predict(self, X, y):
         return self.model_filter(self.optimized_params, X, y)
     
-    def simulate(self, params = [0.0, 0.1, 0.2, 0.6, 0.4, 0.005, 1.0], lag = 12, num = 100):
+    def simulate(self, params = [0.0, 0.1, 0.2, 0.6, 0.4, 0.005, 5.0], lag = 12, num = 100):
         rv = np.zeros(num)
         tau = np.zeros(num)
         g = np.zeros(num * 22)
@@ -395,10 +412,10 @@ class MGARCH(BaseModel):
         for t in range(num):
             if t - lag < 0:
                 rv[t] = np.sum(y[(t - 1 )* 22 : t * 22] ** 2)
-                tau[t] = m + pszi * Beta().x_weighted(rv[:t].reshape((1, rv[:t].shape[0])), [1.0, theta])
+                tau[t] = m + pszi * Beta().x_weighted(rv[:t][::-1].reshape((1, rv[:t].shape[0])), [1.0, theta])
             else:
                 rv[t] = np.sum(y[(t - 1 )* 22 : t * 22] ** 2)
-                tau[t] = m + pszi * Beta().x_weighted(rv[t - lag : t].reshape((1, rv[t - lag : t].shape[0])), [1.0, theta])
+                tau[t] = m + pszi * Beta().x_weighted(rv[t - lag : t][::-1].reshape((1, rv[t - lag : t].shape[0])), [1.0, theta])
             for i in range(t * 22, (t + 1) * 22):
                 if t == 0:
                     if i == 0:
