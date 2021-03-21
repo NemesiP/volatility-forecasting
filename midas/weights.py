@@ -41,14 +41,14 @@ class Exp(WeightMethod):
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     
-    w = Beta().weights([1.0, 5.0], 10)
+    w = ExpAlmon().weights([-0.02, -0.002], 12)
     
     plt.plot(w)
     plt.show()
     
-    x = np.random.normal(size = (10, 10))
+    x = np.random.normal(size = (12, 12))
     
-    xw = Beta().x_weighted(x, [1.0, 5.0])
+    xw = ExpAlmon().x_weighted(x, [-0.02, -0.002])
     
     plt.plot(xw)
     plt.show()
