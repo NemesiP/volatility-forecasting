@@ -12,7 +12,8 @@ import scipy.stats as stats
 from abc import ABCMeta, abstractmethod
 
 class BaseModel(object, metaclass = ABCMeta):
-    def __init__(self, *args):
+    def __init__(self, plot = True, *args):
+        self.plot  = plot
         self.args = args
         
     def transform(self, params, restrictions):
@@ -81,6 +82,7 @@ class BaseModel(object, metaclass = ABCMeta):
                                      'Standard Error': self.standard_errors,
                                      '95% CI Lower': low,
                                      '95% CI Higher': high})
-        print('Loglikelihood: ', self.opt.fun, '\n')
-        print(self.table)
+        if self.plot == True:
+            print('Loglikelihood: ', self.opt.fun, '\n')
+            print(self.table)
         return

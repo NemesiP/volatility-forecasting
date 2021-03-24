@@ -429,3 +429,108 @@ class MGARCH(BaseModel):
                     sigma2[i] = g[i] * tau[t]
                     y[i] = stats.norm.rvs(loc = params[0], scale = np.sqrt(sigma2[i]))
         return rv, tau, g, sigma2, y
+    
+class GARCH_MIDAS_sim(BaseModel):
+    def __init__(self, lag = 36, plot = True, *args):
+        self.lag = lag
+        self.plot = plot
+        self.args = args
+
+    def initialize_params(self, X):
+        self.init_params = np.array([0.05, 0.5, 0.5, 0.5, 0.5, 1.0])
+        return self.init_params
+    
+    def model_filter(self, params, X, y):
+        self.tau = np.zeros(len(X))
+        self.g = np.zeros(len(y))
+        sigma2 = np.zeros(len(y))
+        
+        I_t = int(len(y) / len(X))
+        
+        mu = params[0]
+        alpha1 = params[1]
+        beta1 = params[2]
+        m = params[3]
+        theta = params[4]
+        w = params[5]
+        
+        X_t = np.zeros((len(X), self.lag))
+        
+        for t in range(len(X)):
+            if t < self.lag:
+                X_t[t] = np.hstack((X[ : t][::-1], np.zeros(self.lag - t)))
+            else:
+                X_t[t] = X[t - self.lag : t][::-1]
+                
+        self.tau = np.exp(m + theta *  Beta().x_weighted(X_t, [1.0, w]))
+        
+        j = 0
+        
+        for i in range(len(y)):
+            if i % I_t == 0:
+                j += 1
+                
+            if i == 0:
+                self.g[i] = 1
+            else:
+                self.g[i] = (1 - alpha1 - beta1) + alpha1 * ((y[i - 1] - mu) ** 2) / self.tau[j - 1] + beta1 *self.g[i - 1]
+                    
+            sigma2[i] = self.g[i] * self.tau[j - 1]
+                
+        return sigma2
+    
+    def loglikelihood(self, params, X, y):
+        sigma2 = self.model_filter(params, X, y)
+        resid = y - params[0]
+        return loglikelihood_normal(resid, sigma2)
+    
+    def simulate(self,
+                 params = [0.0, 0.06, 0.91, 0.1, 0.3, 4.0, 0.9, 0.09],
+                 num = 480,
+                 lag = 36,
+                 I_t = 22):
+        X = np.zeros(num)
+        tau = np.zeros(num)
+        g = np.zeros(num * I_t)
+        sigma2 = np.zeros(num * I_t)
+        r = np.zeros(num * I_t)
+        X_t = np.zeros((num, lag))
+        
+        mu = params[0]
+        alpha1 = params[1]
+        beta1 = params[2]
+        m = params[3]
+        theta = params[4]
+        w = params[5]
+        fi = params[6]
+        sigma_fi = params[7]
+        
+        j = 0
+        
+        for i in range(num):
+            if i == 0:
+                X[i] = np.random.normal(0.0, sigma_fi)
+            else:
+                X[i] = fi * X[i - 1] + np.random.normal(0.0, sigma_fi)
+        
+        for i in range(num):
+            if i < lag:
+                X_t[i] = np.hstack((X[ : i][::-1], np.zeros(lag - i)))
+            else:
+                X_t[i] = X[i - lag : i][::-1]
+            
+        tau = np.exp(m + theta * Beta().x_weighted(X_t, [1.0, w]))
+            
+        for i in range(num * I_t):
+            if i % I_t == 0:
+                j += 1
+            
+            if i == 0:
+                g[i] = 1
+            else:
+                g[i] = 1 - alpha1 - beta1 + alpha1 * (r[i - 1]) ** 2 / tau[j - 1] + beta1 * g[i - 1]
+            
+            sigma2[i] = g[i] * tau[j - 1]
+            r[i] = stats.norm.rvs(loc = mu, scale = np.sqrt(sigma2[i]))
+            
+        return X, r, tau, g, sigma2
