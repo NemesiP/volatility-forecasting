@@ -534,3 +534,48 @@ class GARCH_MIDAS_sim(BaseModel):
             r[i] = stats.norm.rvs(loc = mu, scale = np.sqrt(sigma2[i]))
             
         return X, r, tau, g, sigma2
+    
+class Panel_GARCH(BaseModel):
+    def __init__(self, plot = True, *args):
+        self.plot = plot
+        self.args = args
+    
+    def initialize_params(self, X):
+        self.init_params = np.array([0.5, 0.5])
+        return self.init_params
+    
+    def model_filter(self, params, X):
+        sigma2 = np.zeros_like(X)
+        
+        alpha, beta = params[0], params[1]
+        
+        uncond_var = np.sum(X ** 2, axis = 1) / X.shape[1]
+        
+        for i in range(X.shape[0]):
+            for t in range(X.shape[1]):
+                if t == 0:
+                    sigma2[i][t] = uncond_var[i]
+                else:
+                    sigma2[i][t] = uncond_var[i] * (1 - alpha - beta) + alpha * (X[i][t - 1] ** 2) + beta * sigma2[i][t - 1]
+        
+        return sigma2
+    
+    def loglikelihood(self, params, X):
+        sigma2 = self.model_filter(params, X)
+        resid = X
+        return loglikelihood_normal(resid, sigma2)
+    
+    def simulate(self, params = [0.06, 0.91], num = 100, length = 1000):
+        sigma2 = np.zeros((num, length))
+        r = np.zeros((num, length))
+        
+        alpha, beta = params[0], params[1]
+        
+        for i in range(num):
+            for t in range(length):
+                if t == 0:
+                    sigma2[i][t] = 1.0
+                else:
+                    sigma2[i][t] = 1 - alpha - beta + alpha * (r[i][t - 1] ** 2) + beta * sigma2[i][t - 1]
+                r[i][t] = np.random.normal(0.0, np.sqrt(sigma2[i][t]))
+        return sigma2, r

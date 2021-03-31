@@ -130,6 +130,9 @@ def dm_test(act, pred1, pred2, h = 1, crit = 'MSE', power = 2):
         if crit == 'MSE':
             e1_lst.append((a - p1) ** 2)
             e2_lst.append((a - p2) ** 2)
+        elif crit == 'QLIKE':
+            e1_lst.append(np.log(p1) + a / pi)
+            e2_lst.append(np.log(p2) + a / pi)
         elif crit == 'MAD':
             e1_lst.append(np.abs(a - p1))
             e2_lst.append(np.abs(a - p2))
