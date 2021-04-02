@@ -541,7 +541,7 @@ class Panel_GARCH(BaseModel):
         self.args = args
     
     def initialize_params(self, X):
-        self.init_params = np.array([0.5, 0.5])
+        self.init_params = np.array([0.4, 0.4])
         return self.init_params
     
     def model_filter(self, params, X):
@@ -549,21 +549,30 @@ class Panel_GARCH(BaseModel):
         
         alpha, beta = params[0], params[1]
         
-        uncond_var = np.sum(X ** 2, axis = 1) / X.shape[1]
+        uncond_var = np.mean(X ** 2)
         
-        for i in range(X.shape[0]):
-            for t in range(X.shape[1]):
-                if t == 0:
-                    sigma2[i][t] = uncond_var[i]
-                else:
-                    sigma2[i][t] = uncond_var[i] * (1 - alpha - beta) + alpha * (X[i][t - 1] ** 2) + beta * sigma2[i][t - 1]
+        for i in range(len(X)):
+            if i == 0:
+                sigma2[i] = uncond_var
+            else:
+                sigma2[i] = uncond_var * (1 - alpha - beta) + alpha * (X[i - 1] ** 2) + beta * sigma2[i - 1]
         
         return sigma2
     
     def loglikelihood(self, params, X):
-        sigma2 = self.model_filter(params, X)
-        resid = X
-        return loglikelihood_normal(resid, sigma2)
+        X_columns = X.shape[1]
+        X_length = X.shape[0]
+        X_nan = X.isna().sum().values
+        
+        lls = 0
+        
+        for i in range(X_columns):
+            if X_nan[i] >= X_length:
+                lls += 0
+            else:
+                sigma2 = self.model_filter(params, X.iloc[X_nan[i]:, i].values)
+                lls += loglikelihood_normal(X.iloc[X_nan[i]:, i].values, sigma2)
+        return lls
     
     def simulate(self, params = [0.06, 0.91], num = 100, length = 1000):
         sigma2 = np.zeros((num, length))

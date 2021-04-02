@@ -118,6 +118,7 @@ def parkinson_high_low(df):
     df['High_Low_Est'] = volatility.fillna(0)
     return df
 
+"""
 def dm_test(act, pred1, pred2, h = 1, crit = 'MSE', power = 2):
     e1_lst, e2_lst, d_lst = [], [], []
     
@@ -170,4 +171,58 @@ def dm_test(act, pred1, pred2, h = 1, crit = 'MSE', power = 2):
     
     print('DM = ', DM_stat, '\nDM p_value', p_value)
     return DM_stat, p_value, e1
+"""
+def dm_test(act, pred1, pred2, h = 1, degree = 0):
+    e1_lst, e2_lst, d_lst = [], [], []
+    
+    act_lst = np.asarray(act)
+    pred1_lst = np.asarray(pred1)
+    pred2_lst = np.asarray(pred2)
+    
+    def family_of_loss_func(actual, predicted, degree):
+        """
+        Implemented from:
+        Patton, A. J., 2011. Volatility forecasting comparison using imperfect 
+        volatility proxies, Journal of Econometrics 160, 246-256.
+        """
+        if degree == -2:
+            # QLIKE
+            loss = actual / predicted - np.log(actual / predicted) - 1
+        elif degree == -1:
+            loss = predicted - actual + actual * np.log(actual / predicted)
+        else:
+            # MSE if degree = 0
+            loss = (np.sqrt(actual) ** (2 * degree + 4) - predicted ** (degree + 2)) / ((degree + 1) * (degree + 2))
+            loss -= (1 / (degree + 1)) * (predicted ** (degree + 1)) * (actual - predicted)
+        return loss
+    
+    T = float(len(act_lst))
+    for a, p1, p2 in zip(act_lst, pred1_lst, pred2_lst):
+        e1_lst.append(family_of_loss_func(a, p1, degree))
+        e2_lst.append(family_of_loss_func(a, p2, degree))
+        
+    for e1, e2 in zip(e1_lst, e2_lst):
+        d_lst.append(e1 - e2)
+        
+    d_mean = np.mean(d_lst)
+    
+    def autocovariance(Xi, N, k, Xs):
+        autoCov = 0
+        T = float(N)
+        for i in np.arange(0, N - k):
+            autoCov += ((Xi[i + k]) - Xs) * (Xi[i] - Xs)
+        return autoCov / T
+    
+    gamma = []
+    
+    for lag in range(0, h):
+        gamma.append(autocovariance(d_lst, len(d_lst), lag, d_mean))
+    
+    V_d = (gamma[0] + 2 * np.sum(gamma[1:])) / T
+    DM_stat = d_mean * V_d ** -0.5
 
+    
+    p_value = 2 * t.cdf(-np.abs(DM_stat), df = T - 1)
+    
+    print('DM = ', DM_stat, '\nDM p_value', p_value)
+    return DM_stat, p_value, e1
