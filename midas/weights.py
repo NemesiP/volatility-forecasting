@@ -33,9 +33,8 @@ class ExpAlmon(WeightMethod):
 
 class Exp(WeightMethod):
     def weights(self, params, nlags):
-        lmd = params
         ith = np.arange(1, 1 + nlags)
-        ew = lmd ** ith / np.sum(lmb ** ith)
+        ew = params ** ith / np.sum(params ** ith)
         return ew
 
 if __name__ == '__main__':

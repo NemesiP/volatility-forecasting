@@ -12,8 +12,9 @@ from helper_functions import create_matrix
 import scipy.stats as stats
 
 class MIDAS(BaseModel):
-    def __init__(self, lag = 22, *args):
+    def __init__(self, lag = 22, plot = True, *args):
         self.lag = lag
+        self.plot = plot
         self.args = args
 
     
@@ -55,7 +56,6 @@ class MIDAS(BaseModel):
         """
         model = params[0]
         for i in range(1, len(x) + 1):
-#            model += params[2 * i - 1] * WeightMethod().x_weighted_beta(x['X{num}'.format(num = i)], [1.0, params[2 * i]])
             model += params[2 * i - 1] * Beta().x_weighted(x['X{num}'.format(num = i)], [1.0, params[2 * i]])
         
         return model
@@ -86,31 +86,6 @@ class MIDAS(BaseModel):
         X = create_matrix(X, self.lag)
         return self.model_filter(self.optimized_params, X)
     
-    """
-    def simulate(self, params = [4.0, 0.1, 1.0], num = 500):
-        m, pszi, theta = params[0], params[1], params[2]
-        tau = np.zeros(num)
-        rv = np.zeros(num)
-        y = np.zeros(num * 22)
-        
-        for t in range(num):
-            if t - self.lag < 0:
-                if t == 0:
-                    rv[t] = 0.0
-                else:
-                    rv[t] = np.sum(y[(t - 1 )* 22 : t * 22] ** 2)
-                tau[t] = m + pszi * Beta().x_weighted(rv[:t][::-1].reshape((1, rv[:t].shape[0])), [1.0, theta])
-            else:
-                rv[t] = np.sum(y[(t - 1 )* 22 : t * 22] ** 2)
-                tau[t] = m + pszi * Beta().x_weighted(rv[t - self.lag : t][::-1].reshape((1, rv[t - self.lag : t].shape[0])), [1.0, theta])
-            for i in range(t * 22, (t + 1) * 22):
-                if t == 0:
-                    y[i] = stats.norm.rvs(loc = 0, scale = 1)
-                else:
-                    y[i] = stats.norm.rvs(loc = 0, scale = np.sqrt(tau[t]) / np.sqrt(22))
-        
-        return tau, rv, y
-    """
     def simulate(self, params = [2.0, 0.5, 5.0], lag = 12, num = 500):
         y = np.zeros(num)
         x = np.exp(np.cumsum(np.random.normal(0.5, 2, num) / 100))
@@ -125,7 +100,8 @@ class MIDAS(BaseModel):
         return x, y
     
 class GARCH(BaseModel):
-    def __init__(self, *args):
+    def __init__(self, plot = True, *args):
+        self.plot = plot
         self.args = args
         
     def initialize_params(self, y):
@@ -162,7 +138,8 @@ class GARCH(BaseModel):
         return self.model_filter(self.optimized_params, X)
     
 class T_GARCH(BaseModel):
-    def __init__(self, *args):
+    def __init__(self, plot = True, *args):
+        self.plot = plot
         self.args = args
         
     def initialize_params(self, y):
@@ -200,8 +177,9 @@ class T_GARCH(BaseModel):
         return self.model_filter(self.optimized_params, X)
     
 class GARCH_MIDAS(BaseModel):
-    def __init__(self, lag = 22, *args):
+    def __init__(self, lag = 22, plot = True, *args):
         self.lag = lag
+        self.plot = plot
         self.args = args
         
     def initialize_params(self, X):
@@ -338,8 +316,9 @@ class GARCH_MIDAS(BaseModel):
         return self.model_filter(self.optimized_params, X, y)
     
 class MGARCH(BaseModel):
-    def __init__(self, lag = 12, *args):
+    def __init__(self, lag = 12, plot = True, *args):
         self.lag = lag
+        self.plot = plot
         self.args = args
 
     def initialize_params(self, X):
