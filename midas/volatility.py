@@ -105,7 +105,7 @@ class GARCH(BaseModel):
         self.args = args
         
     def initialize_params(self, y):
-        self.init_params = np.asarray([0.05, 0.02, 0.95])
+        self.init_params = np.asarray([0.0, 0.05, 0.02, 0.95])
         return self.init_params
     
     def model_filter(self, params, y):
