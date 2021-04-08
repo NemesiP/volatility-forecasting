@@ -567,3 +567,70 @@ class Panel_GARCH(BaseModel):
                     sigma2[i][t] = 1 - alpha - beta + alpha * (r[i][t - 1] ** 2) + beta * sigma2[i][t - 1]
                 r[i][t] = np.random.normal(0.0, np.sqrt(sigma2[i][t]))
         return sigma2, r
+    
+class Panel_GARCH_CSA(BaseModel):
+    """
+    Panel GARCH with cross sectional adjustment
+    
+    $r_{it} = \sigma_{it} c_t \epsilon_{it}$
+    $\mu_i = \frac{1}{N} \sum_{i = 1}^N r_{it}^2$
+    $c_t = (1 - \phi) + \phi \sqrt{ \frac{1}{N} \sum_{i = 1}^N (\frac{r_{it-1}}{\sigma_{it-1} c_{t-1}} - \frac{1}{N} \sum_{i = 1}^N \frac{r_{it-1}}{\sigma_{it-1} c_{t-1}} )^2}$
+    $\sigma_{it}^2 = \mu_i (1 - \alpha - \beta) + \alpha \epsilon_{it-1}^2 + \beta \sigma_{it-1}^2$
+    """
+    def __init__(self, plot = True, *args):
+        self.plot = plot
+        self.args = args
+        
+    def initialize_params(self, X):
+        self.init_params = np.array([0.1, 0.5, 0.5])
+        return self.init_params
+    
+    def model_filter(self, params, X):
+        c = np.zeros(X.shape[0])
+        sigma2 = np.zeros(X.shape)
+        
+        T = X.shape[0]
+        N = X.shape[1]
+        
+        mu = np.mean(X ** 2, axis = 0)
+        
+        phi, alpha, beta = params[0], params[1], params[2]
+        
+        for t in range(T):
+            if t == 0:
+                c[t] = 1.0
+            else:
+                c[t] = (1 - phi) + phi * np.sqrt( np.mean( (X[t - 1] / (sigma2[t - 1] * c[t - 1]) - np.mean( X[t - 1] / (sigma2[t - 1] * c[t - 1]) )) ** 2 ) )
+            for i in range(N):
+                if t == 0:
+                    sigma2[t][i] = mu[i]
+                else:
+                    sigma2[t][i] = mu[i] * (1 - alpha - beta) + alpha * (X[t - 1][i] / (sigma2[t - 1][i] * c[t - 1])) ** 2 + beta * sigma2[t - 1][i]
+                
+        return sigma2, c
+    
+    def loglikelihood(self, params, X):
+        sigma2, _ = self.model_filter(params, X)
+        return loglikelihood_normal(X, sigma2)
+    
+    def simulate(self, params = [0.2, 0.2, 0.6], num = 100, length = 500):
+        c = np.zeros(length)
+        sigma2 = np.zeros((length, num))
+        ret = np.zeros((length, num))
+        
+        phi, alpha, beta = params[0], params[1], params[2]
+        
+        for t in range(length):
+            if t == 0:
+                c[t] = 1.0
+            else:
+                c[t] = (1 - phi) + phi * np.sqrt( np.mean( (ret[t - 1] / (sigma2[t - 1] * c[t - 1]) - np.mean( ret[t - 1] / (sigma2[t - 1] * c[t - 1]) )) ** 2 ) )
+                mu = np.mean(ret[ : t] ** 2, axis = 0)
+            for i in range(num):
+                if t == 0:
+                    sigma2[t][i] = 1.0
+                else:
+                    sigma2[t][i] = mu[i] * (1 - alpha - beta) + alpha * (ret[t - 1][i] / (sigma2[t - 1][i] * c[t - 1])) ** 2 + beta * sigma2[t - 1][i]
+                ret[t] = stats.norm.rvs(loc = 0.0, scale = np.sqrt(sigma2[t]))
+                
+        return ret, sigma2, c
