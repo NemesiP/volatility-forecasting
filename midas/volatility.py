@@ -599,13 +599,10 @@ class Panel_GARCH_CSA(BaseModel):
         for t in range(T):
             if t == 0:
                 c[t] = 1.0
+                sigma2[t] = mu
             else:
                 c[t] = (1 - phi) + phi * np.sqrt( np.mean( (X[t - 1] / (sigma2[t - 1] * c[t - 1]) - np.mean( X[t - 1] / (sigma2[t - 1] * c[t - 1]) )) ** 2 ) )
-            for i in range(N):
-                if t == 0:
-                    sigma2[t][i] = mu[i]
-                else:
-                    sigma2[t][i] = mu[i] * (1 - alpha - beta) + alpha * (X[t - 1][i] / (sigma2[t - 1][i] * c[t - 1])) ** 2 + beta * sigma2[t - 1][i]
+                sigma2[t] = mu * (1 - alpha - beta) + alpha * (X[t - 1] / (sigma2[t - 1] * c[t - 1])) ** 2 + beta * sigma2[t - 1]
                 
         return sigma2, c
     
@@ -613,7 +610,7 @@ class Panel_GARCH_CSA(BaseModel):
         sigma2, _ = self.model_filter(params, X)
         return loglikelihood_normal(X, sigma2)
     
-    def simulate(self, params = [0.2, 0.2, 0.6], num = 100, length = 500):
+    def simulate(self, params = [0.1, 0.2, 0.6], num = 100, length = 500):
         c = np.zeros(length)
         sigma2 = np.zeros((length, num))
         ret = np.zeros((length, num))
@@ -623,14 +620,12 @@ class Panel_GARCH_CSA(BaseModel):
         for t in range(length):
             if t == 0:
                 c[t] = 1.0
+                sigma2[t] = 1.0
             else:
                 c[t] = (1 - phi) + phi * np.sqrt( np.mean( (ret[t - 1] / (sigma2[t - 1] * c[t - 1]) - np.mean( ret[t - 1] / (sigma2[t - 1] * c[t - 1]) )) ** 2 ) )
                 mu = np.mean(ret[ : t] ** 2, axis = 0)
-            for i in range(num):
-                if t == 0:
-                    sigma2[t][i] = 1.0
-                else:
-                    sigma2[t][i] = mu[i] * (1 - alpha - beta) + alpha * (ret[t - 1][i] / (sigma2[t - 1][i] * c[t - 1])) ** 2 + beta * sigma2[t - 1][i]
-                ret[t] = stats.norm.rvs(loc = 0.0, scale = np.sqrt(sigma2[t]))
+                sigma2[t] = mu * (1 - alpha - beta) + alpha * (ret[t - 1] / (sigma2[t - 1] * c[t - 1])) ** 2 + beta * sigma2[t - 1]
+            
+            ret[t] = stats.norm.rvs(loc = 0.0, scale = np.sqrt(sigma2[t]))
                 
         return ret, sigma2, c
