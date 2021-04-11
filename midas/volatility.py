@@ -554,18 +554,17 @@ class Panel_GARCH(BaseModel):
         return lls
     
     def simulate(self, params = [0.06, 0.91], num = 100, length = 1000):
-        sigma2 = np.zeros((num, length))
-        r = np.zeros((num, length))
+        sigma2 = np.zeros((length, num))
+        r = np.zeros((length, num))
         
         alpha, beta = params[0], params[1]
         
-        for i in range(num):
-            for t in range(length):
-                if t == 0:
-                    sigma2[i][t] = 1.0
-                else:
-                    sigma2[i][t] = 1 - alpha - beta + alpha * (r[i][t - 1] ** 2) + beta * sigma2[i][t - 1]
-                r[i][t] = np.random.normal(0.0, np.sqrt(sigma2[i][t]))
+        for t in range(length):
+            if t == 0:
+                sigma2[t] = 1.0
+            else:
+                sigma2[t] = 1 - alpha - beta + alpha * (r[t - 1] ** 2) + beta * sigma2[t - 1]
+            r[t] = np.random.normal(0.0, np.sqrt(sigma2[t]))
         return sigma2, r
     
 class Panel_GARCH_CSA(BaseModel):
