@@ -5,6 +5,7 @@ Created on Tue Feb 23 11:50:49 2021
 @author: peter
 """
 import numpy as np
+import pandas as pd
 from base import BaseModel
 from stats import loglikelihood_normal, loglikelihood_student_t
 from weights import Beta
@@ -322,17 +323,14 @@ class MGARCH(BaseModel):
         self.args = args
 
     def initialize_params(self, X):
-        garch_params = np.array([0.05, 0.1, 0.1, 0.85])
-        midas_params = np.array([0.5, 0.1, 1.0])
-        """
         try:
             X_len = X.shape[1]
         except:
             X_len = 1
         
-        for i in range(X_len):
-            midas_params = np.append(midas_params, [1.0, 1.0])
-        """
+        garch_params = np.array([0.1, 0.85])
+        midas_params = np.linspace(1.0, 1.0, int(1.0 + X_len * 2.0))
+        
         self.init_params = np.append(garch_params, midas_params)
         return self.init_params
 
@@ -341,38 +339,43 @@ class MGARCH(BaseModel):
         self.tau = np.zeros(len(X))
         sigma2 = np.zeros(len(y))
         
-        mu, alpha0, alpha1, beta1 = params[0], params[1], params[2], params[3]
+        try:
+            X_len = X.shape[1]
+        except:
+            X_len = 1
         
-        resid = y - mu
-        uncond_var = alpha0 / (1 - alpha1 - beta1)
+        alpha1, beta1 = params[0], params[1]
+        
+        resid = y
+        uncond_var = np.mean(y ** 2)
 
-        for t in range(len(X)):
+        for t in range(len(X) - 1):
             if t == 0:
-                m = np.where(y.index < X.index[t])[0]
+                m = np.where(y.index < X.index[t + 1])[0]
             else:
-                m = np.where((y.index < X.index[t]) & (y.index >= X.index[t - 1]))[0]
+                m = np.where((y.index >= X.index[t]) & (y.index < X.index[t + 1]))[0]
             
             if t - self.lag < 0:
-                self.tau[t] = params[4] + params[5] * Beta().x_weighted(X[:t].values.T, [1.0, params[6]])
+                self.tau[t] = params[2]
+                for par in range(1, X_len + 1):
+                    self.tau[t] += params[2 * par + 1] * Beta().x_weighted(X.iloc[ : t, par - 1][::-1].values.reshape((1, X.iloc[ : t, par - 1].shape[0])), [1.0, params[2 * par + 2]])
             else:
-                self.tau[t] = params[4] + params[5] * Beta().x_weighted(X[t - self.lag : t].values.T, [1.0, params[6]])
+                self.tau[t] = params[2] 
+                for par in range(1, X_len + 1):
+                    self.tau[t] += params[2 * par + 1] * Beta().x_weighted(X.iloc[t - self.lag : t, par - 1][::-1].values.reshape((1, X.iloc[t - self.lag : t, par - 1].shape[0])), [1.0, params[2 * par + 2]])
             
             for i in m:
-                if t == 0:
-                    if i == 0:
-                        self.g[i] = uncond_var
-                    else:
-                        self.g[i] = uncond_var * (1 - alpha1 - beta1) + alpha1 * resid[i - 1] ** 2 + beta1 * self.g[i - 1]
-                    sigma2[i] = self.g[i]
+                if i == 0:
+                    self.g[i] = uncond_var
                 else:
                     self.g[i] = uncond_var * (1 - alpha1 - beta1) + alpha1 * (resid[i - 1] ** 2) / self.tau[t] + beta1 * self.g[i - 1]
-                    sigma2[i] = self.g[i] * self.tau[t]
+                sigma2[i] = self.g[i] * self.tau[t]
                     
         return sigma2
     
     def loglikelihood(self, params, X, y):
         sigma2 = self.model_filter(params, X, y)
-        resid = y - params[0]
+        resid = y
         return loglikelihood_normal(resid, sigma2)
     
     def predict(self, X, y):
@@ -539,8 +542,7 @@ class Panel_GARCH(BaseModel):
         return sigma2
     
     def loglikelihood(self, params, X):
-        X_columns = X.shape[1]
-        X_length = X.shape[0]
+        X_length, X_columns = X.shape
         X_nan = X.isna().sum().values
         
         lls = 0
@@ -566,6 +568,43 @@ class Panel_GARCH(BaseModel):
                 sigma2[t] = 1 - alpha - beta + alpha * (r[t - 1] ** 2) + beta * sigma2[t - 1]
             r[t] = np.random.normal(0.0, np.sqrt(sigma2[t]))
         return sigma2, r
+    
+    def forecast(self, y, H = 5, plotting = True):
+        from pandas.tseries.offsets import BDay
+        forecast = np.zeros(H)
+        mu = np.mean(y ** 2)
+        alpha = self.optimized_params[0]
+        beta = self.optimized_params[1]
+        sigma2 = self.model_filter(self.optimized_params, y)
+        
+        for t in range(1, H + 1):
+            forecast[t - 1] = mu * (1 - (alpha + beta) ** (t - 1)) + (alpha + beta) ** (t - 1) * sigma2[-1]
+    
+        forc = np.zeros(len(y) + H)
+        forc[:-H] = sigma2
+        forc[-H:] = forecast
+        
+        if isinstance(y, pd.core.series.Series) or isinstance(y, pd.core.frame.DataFrame):
+            index = []
+            for i in range(len(y) + H):
+                if i < len(y):
+                    index.append(y.index[i])
+                else:
+                    index.append(y.index[-1] + BDay(i - len(y.index) + 1))
+    
+            forecasted_series = pd.Series(data = forc, index = index)
+            if plotting == True:
+                plt.figure(figsize = (15, 5))
+                plt.plot(forc[forc.index <= pd.to_datetime(y.index[-1])], 'g')
+                plt.plot(forc[forc.index > pd.to_datetime(y.index[-1])], 'r')
+                plt.title("Volatility Prediction for the next {} days".format(H))
+                plt.tight_layout()
+                plt.show()
+        else:
+            forecasted_series = forc
+        
+        return forecasted_series
+        
     
 class Panel_GARCH_CSA(BaseModel):
     """
@@ -621,10 +660,85 @@ class Panel_GARCH_CSA(BaseModel):
                 c[t] = 1.0
                 sigma2[t] = 1.0
             else:
-                c[t] = (1 - phi) + phi * np.sqrt( np.mean( (ret[t - 1] / (sigma2[t - 1] * c[t - 1]) - np.mean( ret[t - 1] / (sigma2[t - 1] * c[t - 1]) )) ** 2 ) )
+                c[t] = (1 - phi) + phi * np.std(ret[t - 1] / (sigma2[t - 1] * c[t - 1]))
                 mu = np.mean(ret[ : t] ** 2, axis = 0)
                 sigma2[t] = mu * (1 - alpha - beta) + alpha * (ret[t - 1] / (sigma2[t - 1] * c[t - 1])) ** 2 + beta * sigma2[t - 1]
             
             ret[t] = stats.norm.rvs(loc = 0.0, scale = np.sqrt(sigma2[t]))
                 
         return ret, sigma2, c
+
+class Panel_MIDAS(BaseModel):
+    def __init__(self, lag = 12, plot = True, *args):
+        self.lag = lag
+        self.plot = plot
+        self.args = args
+        
+    def initialize_params(self, X):
+        self.init_params = np.linspace(1, 1, int(1.0 + X.shape[1] * 2.0))
+        return self.init_params
+    
+    def model_filter(self, params, X):
+        X = create_matrix(X, self.lag)
+        model = params[0]
+        for i in range(1, len(X) + 1):
+            model += params[2 * i - 1] * Beta().x_weighted(X['X{num}'.format(num = i)], [1.0, params[2 * i]])
+        return model
+            
+    def loglikelihood(self, params, X, y):
+        try:
+            y_len, y_col = y.shape
+        except:
+            y_len, y_col = y.shape[0], 1
+        
+        y_nan = y.isna().sum().values
+        self.tau_t = np.zeros(y_len)
+        tau = self.model_filter(params, X)
+        T = X.shape[0]
+        j = 0
+        
+        for i in range(T - 1):
+            if i == 0:
+                index = y[y.index < X.index[i + 1]].index
+            else:
+                index = y[(y.index >= X.index[i]) & (y.index < X.index[i + 1])].index
+                
+            mat = np.linspace(tau[i], tau[i], index.shape[0])
+            self.tau_t[j : j + index.shape[0]] = mat
+            j += index.shape[0]
+            
+        lls = 0
+        for i in range(y_col):
+            if y_nan[i] >= y_len:
+                lls += 0
+            else:
+                lls += loglikelihood_normal(y.iloc[y_nan[i]:, i].values, self.tau_t[y_nan[i]:])
+        return lls
+
+class Panel_GARCH_MIDAS(object):
+    def __init__(self, lag = 12, plot = True, *args):
+        self.lag = lag
+        self.plot = plot
+        self.args = args
+        
+    def fit(self, restriction_midas, restriction_garch, X, y):
+        self.midas = Panel_MIDAS(lag = self.lag, plot = self.plot)
+        print('Estimated parameters for the MIDAS equation:\n')
+        self.midas.fit(restriction_midas, X, y)
+
+        y_hat = self.calculate_y_hat(y, self.midas.tau_t)
+        
+        self.garch = Panel_GARCH(plot = self.plot)
+        print('\nEstimated parameters for the GARCH equation:\n')
+        self.garch.fit(restriction_garch, y_hat)
+
+    def calculate_y_hat(self, y, tau):
+        y_hat = np.zeros_like(y)
+
+        for i in range(y.shape[0]):
+            for j in range(y.shape[1]):
+                y_hat[i][j] = y.iloc[i, j] / np.sqrt(tau[i])
+                
+        y_hat = pd.DataFrame(data = y_hat, index = y.index, columns = y.columns)
+
+        return y_hat
