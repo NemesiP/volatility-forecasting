@@ -25,7 +25,7 @@ def create_lagged_variable(data, name, lag):
     new_df = pd.DataFrame(data = {name: data})
     for i in range(lag):
         ## Annyi késleltetést készítek, amennyit a self.lag-ban megadtam
-        new_df['Lag {number}'.format(number = i + 1)] = new_df[name].shift(i + 1).fillna(0)
+        new_df['Lag {number}'.format(number = i + 1)] = new_df[name].shift(i).fillna(0)
     return new_df
     
 def create_matrix(data, lag):

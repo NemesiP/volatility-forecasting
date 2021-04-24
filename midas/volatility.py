@@ -10,6 +10,7 @@ from base import BaseModel
 from stats import loglikelihood_normal, loglikelihood_student_t
 from weights import Beta
 from helper_functions import create_matrix
+from datetime import datetime, timedelta
 import scipy.stats as stats
 
 class MIDAS(BaseModel):
@@ -99,7 +100,81 @@ class MIDAS(BaseModel):
                 y[i] = alpha + beta * Beta().x_weighted(x[i - lag : i][::-1].reshape((1, lag)), [1.0, theta])
         
         return x, y
+ 
+class MIDAS_sim(BaseModel):
+    def __init__(self, lag = 22, plot = True, *args):
+        self.lag = lag
+        self.plot = plot
+        self.args = args
+        
+    def initialize_params(self, X):
+        self.init_params = np.linspace(1, 1, 3)
+        return self.init_params
     
+    def model_filter(self, params, X, y):
+        if isinstance(y, int) or isinstance(y, float):
+            T = y
+        else:
+            T = len(y)
+        model = np.zeros(T)
+        
+        for i in range(T):
+            model[i] = params[0] + params[1] * Beta().x_weighted(X[i * self.lag : (i + 1) * self.lag].reshape((1, self.lag)), [1.0, params[2]])
+        
+        return model
+    
+    def loglikelihood(self, params, X, y):
+        return np.sum((y - self.model_filter(params, X, y)) ** 2)
+    
+
+    def simulate(self, params = [0.1, 0.3, 4.0], num = 500, K = 22):
+        X = np.zeros(num * K)
+        y = np.zeros(num)
+        
+        for i in range(num * K):
+            if i == 0:
+                X[i] = np.random.normal()
+            else:
+                X[i] = 0.9 * X[i - 1] + np.random.normal()
+                
+        for i in range(num):
+            y[i] = params[0] + params[1] * Beta().x_weighted(X[i * K : (i + 1) * K].reshape((1, K)), [1.0, params[2]]) + np.random.normal(scale = 0.7**2)
+        
+        return X, y  
+    
+    def create_sims(self, number_of_sims = 500, length = 500, K = 22, params = [0.1, 0.3, 4.0]):
+        lls, b0, b1, th, runtime = np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims)
+        
+        for i in range(number_of_sims):
+            np.random.seed(i)
+            X, y = self.simulate(params = params, num = length, K = K)
+            start = time.time()
+            self.fit(['pos', 'pos', 'pos'], X, y)
+            runtime[i] = time.time() - start
+            lls[i] = self.opt.fun
+            b0[i], b1[i], th[i] = self.optimized_params[0], self.optimized_params[1], self.optimized_params[2]
+            
+        return pd.DataFrame(data = {'LogLike': lls, 
+                                    'Beta0': b0, 
+                                    'Beta1': b1, 
+                                    'Theta':th})
+    
+    def forecasting(self, X, k = 10):
+        X_n = np.zeros(k * 22)
+        
+        for i in range(k * 22):
+            if i == 0:
+                X_n[i] = 0.9 * X[-1] + np.random.normal()
+            else:
+                X_n[i] = 0.9 * X_n[i - 1] + np.random.normal()
+                
+        try:
+            y_hat = self.model_filter(self.optimized_params, X_n, k)
+        except:
+            params = input('Please give the parameters:')
+            
+        return X_n, y_hat    
+
 class GARCH(BaseModel):
     def __init__(self, plot = True, *args):
         self.plot = plot
@@ -571,6 +646,7 @@ class Panel_GARCH(BaseModel):
     
     def forecast(self, y, H = 5, plotting = True):
         from pandas.tseries.offsets import BDay
+        import matplotlib.pyplot as plt
         forecast = np.zeros(H)
         mu = np.mean(y ** 2)
         alpha = self.optimized_params[0]
@@ -669,9 +745,10 @@ class Panel_GARCH_CSA(BaseModel):
         return ret, sigma2, c
 
 class Panel_MIDAS(BaseModel):
-    def __init__(self, lag = 12, plot = True, *args):
+    def __init__(self, lag = 12, plot = True, exp = True, *args):
         self.lag = lag
         self.plot = plot
+        self.exp = exp
         self.args = args
         
     def initialize_params(self, X):
@@ -683,7 +760,10 @@ class Panel_MIDAS(BaseModel):
         model = params[0]
         for i in range(1, len(X) + 1):
             model += params[2 * i - 1] * Beta().x_weighted(X['X{num}'.format(num = i)], [1.0, params[2 * i]])
-        return model
+        if self.exp == True:
+            return np.exp(model)
+        else:
+            return model
             
     def loglikelihood(self, params, X, y):
         try:
@@ -714,15 +794,76 @@ class Panel_MIDAS(BaseModel):
             else:
                 lls += loglikelihood_normal(y.iloc[y_nan[i]:, i].values, self.tau_t[y_nan[i]:])
         return lls
+    
+    def simulate(self, params = [0.1, 0.3, 4.0], num = 500, K = 12, panel = 100):
+        X = np.zeros(num)
+        tau = np.zeros(num)
+        r = np.zeros((num * 22, panel))
+        j = 0
+        month = []
+        m_dates = []
+        y_dates = []
+        
+        for t in range(num):
+            if t == 0:
+                X[t] = np.random.normal()
+            else:
+                X[t] = 0.9 * X[t - 1] + np.random.normal()
+                
+        for t in range(1, num + 1):
+            if t < K + 1:
+                tau[t - 1] = params[0] + params[1] * Beta().x_weighted(X[:t][::-1].reshape((1, X[:t].shape[0])), [1.0, params[2]])
+            else:
+                tau[t - 1] = params[0] + params[1] * Beta().x_weighted(X[t - K : t][::-1].reshape((1, K)), [1.0, params[2]])
+                
+            r[(t - 1) * 22 : t * 22] = np.random.normal(scale = np.sqrt(np.exp(tau[t - 1])), size = (22, panel))
+            
+        
+        for i in range(num):
+            month.append(i % 12)
 
+        for i in month:
+            if i == 0:
+                j += 1
+                m_dates.append(datetime(2010 + j, 1, 1))
+            else:
+                m_dates.append(datetime(2010 + j, 1 + i, 1))
+
+        for i in m_dates[:-1]:
+            for j in range(22):
+                y_dates.append(i + timedelta(j))   
+        
+        y = pd.DataFrame(data = r[:-22], index = y_dates)
+        X = pd.DataFrame(data = X, index = m_dates)
+        
+        return X, y, tau
+    
+    def create_sims(self, number_of_sims = 500, length = 100, K = 12, params = [0.1, 0.3, 4.0]):
+        lls, b0, b1, th, runtime = np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims)
+        
+        for i in range(number_of_sims):
+            np.random.seed(i)
+            X, y = self.simulate(params = params, num = length, K = K, panel = 100)
+            start = time.time()
+            self.fit(['pos', 'pos', 'pos'], X, y)
+            runtime[i] = time.time() - start
+            lls[i] = self.opt.fun
+            b0[i], b1[i], th[i] = self.optimized_params[0], self.optimized_params[1], self.optimized_params[2]
+            
+        return pd.DataFrame(data = {'LogLike': lls, 
+                                    'Beta0': b0, 
+                                    'Beta1': b1, 
+                                    'Theta':th})
+    
 class Panel_GARCH_MIDAS(object):
-    def __init__(self, lag = 12, plot = True, *args):
+    def __init__(self, lag = 12, plot = True, exp = True, *args):
         self.lag = lag
+        self.exp = exp
         self.plot = plot
         self.args = args
         
     def fit(self, restriction_midas, restriction_garch, X, y):
-        self.midas = Panel_MIDAS(lag = self.lag, plot = self.plot)
+        self.midas = Panel_MIDAS(lag = self.lag, plot = self.plot, exp = self.exp)
         print('Estimated parameters for the MIDAS equation:\n')
         self.midas.fit(restriction_midas, X, y)
 
@@ -742,3 +883,41 @@ class Panel_GARCH_MIDAS(object):
         y_hat = pd.DataFrame(data = y_hat, index = y.index, columns = y.columns)
 
         return y_hat
+    
+    def forecast(self, y, H = 5, plotting = True):
+        from pandas.tseries.offsets import BDay
+        import matplotlib.pyplot as plt
+        forecast = np.zeros(H)
+        mu = np.mean(y ** 2)
+        alpha = self.garch.optimized_params[0]
+        beta = self.garch.optimized_params[1]
+        y_hat = y / self.midas.tau_t
+        sigma2 = self.garch.model_filter(self.garch.optimized_params, y_hat)
+        
+        for i in range(1, H + 1):
+            forecast[i - 1] = (mu * (1 - (alpha + beta) ** (i - 1)) + sigma2[-1] * (alpha + beta) ** (i - 1)) * self.midas.tau_t[-1]
+        
+        forc = np.zeros(len(y) + H)
+        forc[:-H] = sigma2 * self.midas.tau_t
+        forc[-H:] = forecast
+        
+        if isinstance(y, pd.core.series.Series) or isinstance(y, pd.core.frame.DataFrame):
+            index = []
+            for i in range(len(y) + H):
+                if i < len(y):
+                    index.append(y.index[i])
+                else:
+                    index.append(y.index[-1] + BDay(i - len(y.index) + 1))
+    
+            forecasted_series = pd.Series(data = forc, index = index)
+            if plotting == True:
+                plt.figure(figsize = (15, 5))
+                plt.plot(forecasted_series[forecasted_series.index <= pd.to_datetime(y.index[-1])], 'g')
+                plt.plot(forecasted_series[forecasted_series.index > pd.to_datetime(y.index[-1])], 'r')
+                plt.title("Volatility Prediction for the next {} days".format(H))
+                plt.tight_layout()
+                plt.show()
+        else:
+            forecasted_series = forc
+        
+        return forecasted_series
