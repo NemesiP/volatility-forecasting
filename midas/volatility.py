@@ -11,6 +11,7 @@ from stats import loglikelihood_normal, loglikelihood_student_t
 from weights import Beta
 from helper_functions import create_matrix
 from datetime import datetime, timedelta
+import time
 import scipy.stats as stats
 
 class MIDAS(BaseModel):
@@ -702,6 +703,7 @@ class Panel_GARCH_CSA(BaseModel):
     def model_filter(self, params, X):
         c = np.zeros(X.shape[0])
         sigma2 = np.zeros(X.shape)
+        X_nan = X.isna().sum().values
         
         T = X.shape[0]
         N = X.shape[1]
@@ -715,7 +717,7 @@ class Panel_GARCH_CSA(BaseModel):
                 c[t] = 1.0
                 sigma2[t] = mu
             else:
-                c[t] = (1 - phi) + phi * np.sqrt( np.mean( (X[t - 1] / (sigma2[t - 1] * c[t - 1]) - np.mean( X[t - 1] / (sigma2[t - 1] * c[t - 1]) )) ** 2 ) )
+                c[t] = (1 - phi) + phi * np.stdnan(X[t - 1] / (sigma2[t - 1] * c[t - 1]))
                 sigma2[t] = mu * (1 - alpha - beta) + alpha * (X[t - 1] / (sigma2[t - 1] * c[t - 1])) ** 2 + beta * sigma2[t - 1]
                 
         return sigma2, c
@@ -843,12 +845,13 @@ class Panel_MIDAS(BaseModel):
         
         for i in range(number_of_sims):
             np.random.seed(i)
-            X, y = self.simulate(params = params, num = length, K = K, panel = 100)
+            X, y, _ = self.simulate(params = params, num = length, K = K, panel = 100)
             start = time.time()
             self.fit(['pos', 'pos', 'pos'], X, y)
             runtime[i] = time.time() - start
             lls[i] = self.opt.fun
             b0[i], b1[i], th[i] = self.optimized_params[0], self.optimized_params[1], self.optimized_params[2]
+            print("{}st iteration's runTime: {} sec.\n".format(i + 1, round(runtime[i], 4)))
             
         return pd.DataFrame(data = {'LogLike': lls, 
                                     'Beta0': b0, 
@@ -864,13 +867,19 @@ class Panel_GARCH_MIDAS(object):
         
     def fit(self, restriction_midas, restriction_garch, X, y):
         self.midas = Panel_MIDAS(lag = self.lag, plot = self.plot, exp = self.exp)
-        print('Estimated parameters for the MIDAS equation:\n')
+        if self.plot == True:
+            print('Estimated parameters for the MIDAS equation:\n')
+        else:
+            pass
         self.midas.fit(restriction_midas, X, y)
 
         y_hat = self.calculate_y_hat(y, self.midas.tau_t)
         
         self.garch = Panel_GARCH(plot = self.plot)
-        print('\nEstimated parameters for the GARCH equation:\n')
+        if self.plot == True:
+            print('\nEstimated parameters for the GARCH equation:\n')
+        else:
+            pass
         self.garch.fit(restriction_garch, y_hat)
 
     def calculate_y_hat(self, y, tau):
@@ -884,6 +893,76 @@ class Panel_GARCH_MIDAS(object):
 
         return y_hat
     
+    def simulate(self, midas_params = [0.1, 0.3, 4.0], garch_params = [0.06, 0.8], num = 500, K = 12, panel = 100):
+        beta0, beta1, theta = midas_params[0], midas_params[1], midas_params[2]
+        alpha, beta = garch_params[0], garch_params[1]
+        X = np.zeros(num)
+        tau = np.zeros(num)
+        r = np.zeros((num * 22, panel))
+        g = np.zeros((num * 22, panel))
+        j = 0
+        month = []
+        m_dates = []
+        y_dates = []
+        
+        for t in range(num):
+            if t == 0:
+                X[t] = np.random.normal()
+            else:
+                X[t] = 0.9 * X[t - 1] + np.random.normal()
+                
+        for t in range(1, num + 1):
+            if t < K + 1:
+                tau[t - 1] = np.exp(beta0 + beta1 * Beta().x_weighted(X[:t][::-1].reshape((1, X[:t].shape[0])), [1.0, theta]))
+            else:
+                tau[t - 1] = np.exp(beta0 + beta1 * Beta().x_weighted(X[t - K : t][::-1].reshape((1, K)), [1.0, theta]))
+            
+            for i in range((t - 1) * 22, t * 22):
+                if i == 0:
+                    g[i] = np.ones(panel)
+                else:
+                    g[i] = (1 - alpha - beta) + alpha * (r[i - 1] ** 2) / tau[t - 1] + beta * g[i - 1]
+                
+                r[i] = np.random.normal(scale = np.sqrt(g[i] * tau[t - 1]), size = panel)
+        
+        for i in range(num):
+            month.append(i % 12)
+
+        for i in month:
+            if i == 0:
+                j += 1
+                m_dates.append(datetime(2010 + j, 1, 1))
+            else:
+                m_dates.append(datetime(2010 + j, 1 + i, 1))
+
+        for i in m_dates[:-1]:
+            for j in range(22):
+                y_dates.append(i + timedelta(j))   
+        
+        y = pd.DataFrame(data = r[:-22], index = y_dates)
+        X = pd.DataFrame(data = X, index = m_dates)
+        
+        return X, y, tau, g
+    
+    def create_sims(self, number_of_sims = 500, length = 100, K = 12, midas_params = [0.1, 0.3, 4.0], garch_params = [0.06, 0.8], panel = 100):
+        b0, b1, th, al, bt, runtime = np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims)
+        
+        for i in range(number_of_sims):
+            np.random.seed(i)
+            X, y, _, _ = self.simulate(midas_params = midas_params, garch_params = garch_params, num = length, K = K, panel = panel)
+            start = time.time()
+            self.fit(['pos', 'pos', 'pos'], ['01', '01'], X, y)
+            runtime[i] = time.time() - start
+            b0[i], b1[i], th[i], al[i], bt[i] = self.midas.optimized_params[0], self.midas.optimized_params[1], self.midas.optimized_params[2], self.garch.optimized_params[0], self.garch.optimized_params[1]
+            print("{}st iteration's runTime: {} sec.\n".format(i + 1, round(runtime[i], 4)))
+            
+        return pd.DataFrame(data = {'Beta0': b0, 
+                                    'Beta1': b1, 
+                                    'Theta':th,
+                                    'Alpha': al,
+                                    'Beta': bt})
+    
+            
     def forecast(self, y, H = 5, plotting = True):
         from pandas.tseries.offsets import BDay
         import matplotlib.pyplot as plt
