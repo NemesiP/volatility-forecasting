@@ -599,7 +599,7 @@ class Panel_GARCH(BaseModel):
         self.args = args
     
     def initialize_params(self, X):
-        self.init_params = np.array([0.4, 0.4])
+        self.init_params = np.array([0.4, 0.6])
         return self.init_params
     
     def model_filter(self, params, X):
@@ -619,16 +619,15 @@ class Panel_GARCH(BaseModel):
     
     def loglikelihood(self, params, X):
         X_length, X_columns = X.shape
-        X_nan = X.isna().sum().values
-        
         lls = 0
         
-        for i in range(X_columns):
-            if X_nan[i] >= X_length:
-                lls += 0
+        for i in range(X.shape[1]):
+            xx = X.iloc[np.where(X.iloc[:, i].isna() == False)[0], i].values
+            if len(xx) == 0:
+                lls += 0.0
             else:
-                sigma2 = self.model_filter(params, X.iloc[X_nan[i]:, i].values)
-                lls += loglikelihood_normal(X.iloc[X_nan[i]:, i].values, sigma2)
+                sigma2 = self.model_filter(params, xx)
+                lls += loglikelihood_normal(xx, sigma2)
         return lls
     
     def simulate(self, params = [0.06, 0.91], num = 100, length = 1000):
@@ -645,6 +644,23 @@ class Panel_GARCH(BaseModel):
             r[t] = np.random.normal(0.0, np.sqrt(sigma2[t]))
         return sigma2, r
     
+    
+    def forecast(self, X, H):
+        y_len, y_cols = X.shape
+        y_new = X
+        y_new[y_len] = 0
+        forecast = np.zeros(y_cols)
+        
+        for i in range(y_cols):
+            xx = y_new.iloc[np.where(y_new.iloc[:, i].isna() == False)[0], i].values
+            if len(xx) <= 1.0:
+                forecast[i] = np.nan
+            else:
+                sigma2 = self.model_filter(self.optimized_params, xx)
+                forecast[i] = sigma2[-1] * np.sqrt(H)
+        
+        return forecast
+    """
     def forecast(self, y, H = 5, plotting = True):
         from pandas.tseries.offsets import BDay
         import matplotlib.pyplot as plt
@@ -681,7 +697,7 @@ class Panel_GARCH(BaseModel):
             forecasted_series = forc
         
         return forecasted_series
-        
+    """
     
 class Panel_GARCH_CSA(BaseModel):
     """
@@ -703,28 +719,50 @@ class Panel_GARCH_CSA(BaseModel):
     def model_filter(self, params, X):
         c = np.zeros(X.shape[0])
         sigma2 = np.zeros(X.shape)
-        X_nan = X.isna().sum().values
+        
         
         T = X.shape[0]
         N = X.shape[1]
         
-        mu = np.mean(X ** 2, axis = 0)
+        mu = np.nanmean(X ** 2, axis = 0)
+        
+        X = X.values
         
         phi, alpha, beta = params[0], params[1], params[2]
         
         for t in range(T):
             if t == 0:
                 c[t] = 1.0
-                sigma2[t] = mu
+                for i in range(N):
+                    if np.isnan(X[t][i]) == True:
+                        sigma2[t][i] = np.nan
+                    else:
+                        sigma2[t][i] = mu[i]
             else:
-                c[t] = (1 - phi) + phi * np.stdnan(X[t - 1] / (sigma2[t - 1] * c[t - 1]))
-                sigma2[t] = mu * (1 - alpha - beta) + alpha * (X[t - 1] / (sigma2[t - 1] * c[t - 1])) ** 2 + beta * sigma2[t - 1]
+                c[t] = (1 - phi) + phi * np.nanstd(X[t - 1] / (sigma2[t - 1] * c[t - 1]))
+                for i in range(N):
+                    if np.isnan(X[t - 1][i]) == True:
+                        if np.isnan(X[t][i]) == True:
+                            sigma2[t][i] = np.nan
+                        else:
+                            sigma2[t][i] = mu[i]
+                    else:
+                        sigma2[t][i] = mu[i] * (1 - alpha - beta) + alpha * (X[t - 1][i] / (sigma2[t - 1][i] * c[t - 1])) ** 2 + beta * sigma2[t - 1][i]
                 
         return sigma2, c
     
     def loglikelihood(self, params, X):
         sigma2, _ = self.model_filter(params, X)
-        return loglikelihood_normal(X, sigma2)
+        lls = 0
+        sigma2 = sigma2.T
+        for i in range(X.shape[1]):
+            sig = sigma2[i][np.where(np.isnan(sigma2[i]) == False)[0]]
+            xx = X.iloc[-len(sig):, i].values
+            if len(sig) == 0.0:
+                lls += 0.0
+            else:
+                lls += loglikelihood_normal(xx, sig)
+        return lls
     
     def simulate(self, params = [0.1, 0.2, 0.6], num = 100, length = 500):
         c = np.zeros(length)
@@ -944,12 +982,12 @@ class Panel_GARCH_MIDAS(object):
         
         return X, y, tau, g
     
-    def create_sims(self, number_of_sims = 500, length = 100, K = 12, midas_params = [0.1, 0.3, 4.0], garch_params = [0.06, 0.8], panel = 100):
+    def create_sims(self, number_of_sims = 500, length = 100, K = 12, midas_params = [0.1, 0.3, 4.0], garch_params = [0.06, 0.8]):
         b0, b1, th, al, bt, runtime = np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims)
         
         for i in range(number_of_sims):
             np.random.seed(i)
-            X, y, _, _ = self.simulate(midas_params = midas_params, garch_params = garch_params, num = length, K = K, panel = panel)
+            X, y, _, _ = self.simulate(midas_params = midas_params, garch_params = garch_params, num = length, K = K, panel = 100)
             start = time.time()
             self.fit(['pos', 'pos', 'pos'], ['01', '01'], X, y)
             runtime[i] = time.time() - start
