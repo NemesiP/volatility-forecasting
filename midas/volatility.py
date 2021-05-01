@@ -602,13 +602,12 @@ class Panel_GARCH(BaseModel):
         self.init_params = np.array([0.4, 0.4])
         return self.init_params
     
-    def model_filter(self, params, X, mu):
+    def model_filter(self, params, X):
         sigma2 = np.zeros_like(X)
         
         alpha, beta = params[0], params[1]
         
-#        uncond_var = np.mean(X ** 2)
-        uncond_var = mu
+        uncond_var = np.mean(X ** 2)
         
         for i in range(len(X)):
             if i == 0:
@@ -622,13 +621,12 @@ class Panel_GARCH(BaseModel):
         X_length, X_columns = X.shape
         lls = 0
         
-        mus = np.nanmean(X ** 2, axis = 0)
         for i in range(X.shape[1]):
             xx = X.iloc[np.where(X.iloc[:, i].isna() == False)[0], i].values
             if len(xx) == 0:
                 lls += 0.0
             else:
-                sigma2 = self.model_filter(params, xx, mus[i])
+                sigma2 = self.model_filter(params, xx)
                 lls += loglikelihood_normal(xx, sigma2)
         return lls
     
