@@ -172,7 +172,7 @@ def dm_test(act, pred1, pred2, h = 1, crit = 'MSE', power = 2):
     print('DM = ', DM_stat, '\nDM p_value', p_value)
     return DM_stat, p_value, e1
 """
-def dm_test(act, pred1, pred2, h = 1, degree = 0):
+def dm_test(act, pred1, pred2, h = 1, degree = 0, plot = False):
     e1_lst, e2_lst, d_lst = [], [], []
     
     act_lst = np.asarray(act)
@@ -224,5 +224,6 @@ def dm_test(act, pred1, pred2, h = 1, degree = 0):
     
     p_value = 2 * t.cdf(-np.abs(DM_stat), df = T - 1)
     
-    print('DM = ', DM_stat, '\nDM p_value', p_value)
-    return DM_stat, p_value, e1
+    if plot == True:
+        print('DM = ', DM_stat, '\nDM p_value', p_value)
+    return DM_stat, p_value
