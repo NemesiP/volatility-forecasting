@@ -10,6 +10,7 @@ import numpy as np
 from scipy.optimize import minimize
 import scipy.stats as stats
 from abc import ABCMeta, abstractmethod
+from statsmodels.tools.numdiff import approx_fprime, approx_hess
 
 class BaseModel(object, metaclass = ABCMeta):
     def __init__(self, plot = True, *args):
@@ -82,6 +83,76 @@ class BaseModel(object, metaclass = ABCMeta):
                                      'Standard Error': self.standard_errors,
                                      '95% CI Lower': low,
                                      '95% CI Higher': high})
+        if self.plot == True:
+            print('Loglikelihood: ', self.opt.fun, '\n')
+            print(self.table)
+        return
+
+class GarchBase(object, metaclass = ABCMeta):
+    def __init__(self, plot = True, *args):
+        self.plot  = plot
+        self.args = args
+    
+    def transform(self, params, restrictions):
+        params_trans = np.zeros(params.shape)
+        for i in range(len(params)):
+            if restrictions[i] == 'pos':
+                params_trans[i] = np.log(params[i])
+            elif restrictions[i] == '01':
+                params_trans[i] = np.log(params[i]) - np.log(1 - params[i])
+            else:
+                params_trans[i] = params[i]
+        return params_trans
+    
+    def transform_back(self, params_trans, restrictions):
+        params = np.zeros(params_trans.shape)
+        for i in range(len(params_trans)):
+            if restrictions[i] == 'pos':
+                params[i] = np.exp(params_trans[i])
+            elif restrictions[i] == '01':
+                params[i] = 1 / (1 + np.exp(-params_trans[i]))
+            else:
+                params[i] = params_trans[i]
+        return params
+    
+    @abstractmethod
+    def initialize_params(self):
+        pass
+    
+    @abstractmethod
+    def loglikelihood(self):
+        pass
+    
+    @abstractmethod
+    def variables(self):
+        pass
+    
+    def loglikelihood_trans(self, params_trans, restrictions, y):
+        params = self.transform_back(params_trans, restrictions)
+        return self.loglikelihood(params, y)
+    
+    def fit(self, restrictions, y):
+        res = minimize(self.loglikelihood_trans,
+                       self.transform(self.initialize_params(), restrictions),
+                       args = (restrictions, y),
+                       method = 'SLSQP',
+                       options = {'disp': False})
+        self.opt = res
+        self.optimized_params = self.transform_back(self.opt.x, restrictions)
+        
+        hess = approx_hess(self.optimized_params, self.loglikelihood, kwargs = {'y' : y})
+        hess /= y.shape[0]
+        inv_hess = np.linalg.inv(hess)
+        scores = approx_fprime(self.optimized_params, self.loglikelihood, kwargs = {'y' : y})
+        score_cov = np.cov(scores.T)
+        self.cov_mat = inv_hess.dot(score_cov).dot(inv_hess) / y.shape[0]
+        self.standard_errors = np.sqrt(np.diag(self.cov_mat))
+        
+        self.table = pd.DataFrame(data = {'Parameters': self.optimized_params,
+                                         'Standard Error': self.standard_errors,
+                                         '95% CI Lower': self.optimized_params - stats.norm.ppf(0.975)* self.standard_errors,
+                                         '95% CI Higher': self.optimized_params - stats.norm.ppf(0.975)* self.standard_errors}, 
+                                  index = self.variables())
         if self.plot == True:
             print('Loglikelihood: ', self.opt.fun, '\n')
             print(self.table)

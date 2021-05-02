@@ -6,7 +6,7 @@ Created on Tue Feb 23 11:50:49 2021
 """
 import numpy as np
 import pandas as pd
-from base import BaseModel
+from base import BaseModel, GarchBase
 from stats import loglikelihood_normal, loglikelihood_student_t
 from weights import Beta
 from helper_functions import create_matrix
@@ -1038,3 +1038,183 @@ class Panel_GARCH_MIDAS(object):
             forecasted_series = forc
         
         return forecasted_series
+
+class Panel_GARCH_SLSQP(GarchBase):
+    def __init__(self, plot = True, dist = 'normal', *args):
+        self.plot = plot
+        self.dist = dist
+        self.args = args
+    
+    def initialize_params(self):
+        if self.dist == 'normal':
+            self.init_params = np.array([0.4, 0.4])
+        elif self.dist == 'student-t':
+            self.init_params = np.array([0.4, 0.4, 4.0])
+        else:
+            raise ValueError("ValueError exception thrown")
+        return self.init_params
+    
+    def model_filter(self, params, y):
+        sigma2 = np.zeros(y.shape)
+        alpha, beta = params[0], params[1]
+        uncond_var = np.mean(y ** 2)
+        
+        for i in range(y.shape[0]):
+            if i == 0:
+                sigma2[i] = uncond_var
+            else:
+                sigma2[i] = uncond_var * (1 - alpha - beta) + alpha * (y[i - 1] ** 2) + beta * sigma2[i - 1]
+        
+        return sigma2
+    
+    def loglikelihood(self, params, y):
+        y_len, y_cols = y.shape
+        lls = 0
+        
+        for i in range(y_cols):
+            xx = y.iloc[np.where(y.iloc[:, i].isna() == False)[0], i].values
+            if len(xx) == 0:
+                lls += 0.0
+            else:
+                sigma2 = self.model_filter(params, xx)
+                if self.dist == 'normal':
+                    lls += loglikelihood_normal(xx, sigma2)
+                elif self.dist == 'student-t':
+                    lls += loglikelihood_student_t(xx, sigma2, params[2])
+        return lls
+    
+    def variables(self):
+        if self.dist == 'normal':
+            return ['Alpha', 'Beta']
+        elif self.dist == 'student-t':
+            return ['Alpha', 'Beta', 'Nu']
+        
+    def forecast(self, y, H):
+        y_len, y_cols = y.shape
+        y_new = y
+        y_new[y_len] = 0
+        forecast = np.zeros(y_cols)
+        
+        for i in range(y_cols):
+            xx = y_new.iloc[np.where(y_new.iloc[:, i].isna() == False)[0], i].values
+            if len(xx) <= 1.0:
+                forecast[i] = np.nan
+            else:
+                sigma2 = self.model_filter(self.optimized_params, xx)
+                forecast[i] = sigma2[-1] * np.sqrt(H)
+        
+        return forecast
+    
+    def simulate(self, params = [0.06, 0.91], num = 100, length = 1000):
+        sigma2 = np.zeros((length, num))
+        r = np.zeros((length, num))
+        
+        alpha, beta = params[0], params[1]
+        
+        for t in range(length):
+            if t == 0:
+                sigma2[t] = 1.0
+            else:
+                sigma2[t] = 1 - alpha - beta + alpha * (r[t - 1] ** 2) + beta * sigma2[t - 1]
+            r[t] = np.random.normal(0.0, np.sqrt(sigma2[t]))
+        return sigma2, r
+    
+class Panel_GARCH_CSA_SLSQP(GarchBase):
+    def __init__(self, plot = True, dist = 'normal', *args):
+        self.plot = plot
+        self.dist = dist
+        self.args = args
+    
+    def initialize_params(self):
+        if self.dist == 'normal':
+            self.init_params = np.array([0.4, 0.4, 0.4])
+        elif self.dist == 'student-t':
+            self.init_params = np.array([0.4, 0.4, 0.4, 4.0])
+        else:
+            raise ValueError("ValueError exception thrown")
+        return self.init_params
+    
+    def model_filter(self, params, y):
+        c = np.zeros(y.shape[0])
+        sigma2 = np.zeros(y.shape)
+        
+        
+        T = y.shape[0]
+        N = y.shape[1]
+        
+        mu = np.nanmean(y ** 2, axis = 0)
+        
+        y = y.values
+        
+        phi, alpha, beta = params[0], params[1], params[2]
+        
+        for t in range(T):
+            if t == 0:
+                c[t] = 1.0
+                for i in range(N):
+                    if np.isnan(y[t][i]) == True:
+                        sigma2[t][i] = np.nan
+                    else:
+                        sigma2[t][i] = mu[i]
+            else:
+                c[t] = (1 - phi) + phi * np.nanstd(y[t - 1] / (sigma2[t - 1] * c[t - 1]))
+                for i in range(N):
+                    if np.isnan(y[t - 1][i]) == True:
+                        if np.isnan(y[t - 2][i]) == True:
+                            sigma2[t][i] = np.nan
+                        else:
+                            sigma2[t][i] = mu[i]
+                    else:
+                        sigma2[t][i] = mu[i] * (1 - alpha - beta) + alpha * (y[t - 1][i] / (sigma2[t - 1][i] * c[t - 1])) ** 2 + beta * sigma2[t - 1][i]
+                
+        return sigma2, c
+    
+    def loglikelihood(self, params, y):
+        sigma2, _ = self.model_filter(params, y)
+        lls = 0
+        sigma2 = sigma2.T
+        for i in range(y.shape[1]):
+            sig = sigma2[i][np.where(np.isnan(sigma2[i]) == False)[0]]
+            xx = y.iloc[-len(sig):, i].values
+            if len(sig) == 0.0:
+                lls += 0.0
+            else:
+                if self.dist == 'normal':
+                    lls += loglikelihood_normal(xx, sig)
+                elif self.dist == 'student-t':
+                    lls += loglikelihood_student_t(xx, sigma2, params[3])
+        return lls
+    
+    def variables(self):
+        if self.dist == 'normal':
+            return ['Phi', 'Alpha', 'Beta']
+        elif self.dist == 'student-t':
+            return ['Phi','Alpha', 'Beta', 'Nu']
+        
+    def simulate(self, params = [0.1, 0.2, 0.6], num = 100, length = 500):
+        c = np.zeros(length)
+        sigma2 = np.zeros((length, num))
+        ret = np.zeros((length, num))
+        
+        phi, alpha, beta = params[0], params[1], params[2]
+        
+        for t in range(length):
+            if t == 0:
+                c[t] = 1.0
+                sigma2[t] = 1.0
+            else:
+                c[t] = (1 - phi) + phi * np.std(ret[t - 1] / (sigma2[t - 1] * c[t - 1]))
+                mu = np.mean(ret[ : t] ** 2, axis = 0)
+                sigma2[t] = mu * (1 - alpha - beta) + alpha * (ret[t - 1] / (sigma2[t - 1] * c[t - 1])) ** 2 + beta * sigma2[t - 1]
+            
+            ret[t] = stats.norm.rvs(loc = 0.0, scale = np.sqrt(sigma2[t]))
+                
+        return ret, sigma2, c
+    
+    def forecast(self, y, H):
+        row_nul = pd.DataFrame([[0]*y.shape[1]], columns = y.columns)
+        y = y.append(row_nul)
+        
+        sigma2, _ = self.model_filter(self.optimized_params, y)
+        forecast = sigma2[-1]
+        return forecast
