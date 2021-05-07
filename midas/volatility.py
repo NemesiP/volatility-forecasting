@@ -708,25 +708,27 @@ class Panel_GARCH_CSA(BaseModel):
     $c_t = (1 - \phi) + \phi \sqrt{ \frac{1}{N} \sum_{i = 1}^N (\frac{r_{it-1}}{\sigma_{it-1} c_{t-1}} - \frac{1}{N} \sum_{i = 1}^N \frac{r_{it-1}}{\sigma_{it-1} c_{t-1}} )^2}$
     $\sigma_{it}^2 = \mu_i (1 - \alpha - \beta) + \alpha \epsilon_{it-1}^2 + \beta \sigma_{it-1}^2$
     """
-    def __init__(self, plot = True, *args):
+    def __init__(self, plot = True, dist = 'normal', *args):
         self.plot = plot
+        self.dist = dist
         self.args = args
         
     def initialize_params(self, X):
-        self.init_params = np.array([0.1, 0.5, 0.5])
+        if self.dist == 'normal':
+            self.init_params = np.array([0.1, 0.5, 0.5])
+        elif self.dist == 'student-t':
+            self.init_params = np.array([0.1, 0.5, 0.5, 4.0])
         return self.init_params
     
-    def model_filter(self, params, X):
-        c = np.zeros(X.shape[0])
-        sigma2 = np.zeros(X.shape)
+    def model_filter(self, params, y):
+        c = np.zeros(y.shape[0])
+        sigma2 = np.zeros(y.shape)
         
+        T, N = y.shape
         
-        T = X.shape[0]
-        N = X.shape[1]
+        mu = np.nanmean(y ** 2, axis = 0)
         
-        mu = np.nanmean(X ** 2, axis = 0)
-        
-        X = X.values
+        y = y.values
         
         phi, alpha, beta = params[0], params[1], params[2]
         
@@ -734,34 +736,41 @@ class Panel_GARCH_CSA(BaseModel):
             if t == 0:
                 c[t] = 1.0
                 for i in range(N):
-                    if np.isnan(X[t][i]) == True:
+                    if np.isnan(y[t][i]) == True:
                         sigma2[t][i] = np.nan
                     else:
                         sigma2[t][i] = mu[i]
             else:
-                c[t] = (1 - phi) + phi * np.nanstd(X[t - 1] / (sigma2[t - 1] * c[t - 1]))
+                c[t] = (1 - phi) + phi * np.nanstd(y[t - 1] / (sigma2[t - 1] * c[t - 1]))
                 for i in range(N):
-                    if np.isnan(X[t - 1][i]) == True:
-                        if np.isnan(X[t][i]) == True:
+                    if np.isnan(y[t][i]) == True:
+                        if np.isnan(y[t - 1][i]) == True:
                             sigma2[t][i] = np.nan
                         else:
                             sigma2[t][i] = mu[i]
                     else:
-                        sigma2[t][i] = mu[i] * (1 - alpha - beta) + alpha * (X[t - 1][i] / (sigma2[t - 1][i] * c[t - 1])) ** 2 + beta * sigma2[t - 1][i]
+                        if np.isnan(sigma2[t - 1][i]) == False:
+                            sigma2[t][i] = mu[i] * (1 - alpha - beta) + alpha * (y[t - 1][i] / (sigma2[t - 1][i] * c[t - 1])) ** 2 + beta * sigma2[t - 1][i]
+                        else:
+                            sigma2[t][i] = mu[i]
                 
         return sigma2, c
     
-    def loglikelihood(self, params, X):
-        sigma2, _ = self.model_filter(params, X)
+    def loglikelihood(self, params, y):
+        sigma2, _ = self.model_filter(params, y)
         lls = 0
         sigma2 = sigma2.T
-        for i in range(X.shape[1]):
-            sig = sigma2[i][np.where(np.isnan(sigma2[i]) == False)[0]]
-            xx = X.iloc[-len(sig):, i].values
+        for i in range(y.shape[1]):
+            idx = np.where(np.isnan(sigma2[i]) == False)[0]
+            sig = sigma2[i][idx]
+            xx = y.iloc[idx, i].values
             if len(sig) == 0.0:
                 lls += 0.0
             else:
-                lls += loglikelihood_normal(xx, sig)
+                if self.dist == 'normal':
+                    lls += loglikelihood_normal(xx, sig)
+                elif self.dist == 'student-t':
+                    lls += loglikelihood_student_t(xx, sig, params[3])
         return lls
     
     def simulate(self, params = [0.1, 0.2, 0.6], num = 100, length = 500):
@@ -783,6 +792,15 @@ class Panel_GARCH_CSA(BaseModel):
             ret[t] = stats.norm.rvs(loc = 0.0, scale = np.sqrt(sigma2[t]))
                 
         return ret, sigma2, c
+    
+    def forecast(self, y):
+        row_nul = pd.DataFrame([[0]*y.shape[1]], columns = y.columns)
+        y = y.append(row_nul)
+        
+        sigma2, _ = self.model_filter(self.optimized_params, y)
+        forecast = sigma2[-1]
+        forecast[np.where(forecast == 0)[0]] = np.nan
+        return forecast
 
 class Panel_MIDAS(BaseModel):
     def __init__(self, lag = 12, plot = True, exp = True, *args):
@@ -1138,9 +1156,7 @@ class Panel_GARCH_CSA_SLSQP(GarchBase):
         c = np.zeros(y.shape[0])
         sigma2 = np.zeros(y.shape)
         
-        
-        T = y.shape[0]
-        N = y.shape[1]
+        T, N = y.shape
         
         mu = np.nanmean(y ** 2, axis = 0)
         
@@ -1159,13 +1175,16 @@ class Panel_GARCH_CSA_SLSQP(GarchBase):
             else:
                 c[t] = (1 - phi) + phi * np.nanstd(y[t - 1] / (sigma2[t - 1] * c[t - 1]))
                 for i in range(N):
-                    if np.isnan(y[t - 1][i]) == True:
-                        if np.isnan(y[t - 2][i]) == True:
+                    if np.isnan(y[t][i]) == True:
+                        if np.isnan(y[t - 1][i]) == True:
                             sigma2[t][i] = np.nan
                         else:
                             sigma2[t][i] = mu[i]
                     else:
-                        sigma2[t][i] = mu[i] * (1 - alpha - beta) + alpha * (y[t - 1][i] / (sigma2[t - 1][i] * c[t - 1])) ** 2 + beta * sigma2[t - 1][i]
+                        if np.isnan(sigma2[t - 1][i]) == False:
+                            sigma2[t][i] = mu[i] * (1 - alpha - beta) + alpha * (y[t - 1][i] / (sigma2[t - 1][i] * c[t - 1])) ** 2 + beta * sigma2[t - 1][i]
+                        else:
+                            sigma2[t][i] = mu[i]
                 
         return sigma2, c
     
@@ -1174,8 +1193,9 @@ class Panel_GARCH_CSA_SLSQP(GarchBase):
         lls = 0
         sigma2 = sigma2.T
         for i in range(y.shape[1]):
-            sig = sigma2[i][np.where(np.isnan(sigma2[i]) == False)[0]]
-            xx = y.iloc[-len(sig):, i].values
+            idx = np.where(np.isnan(sigma2[i]) == False)[0]
+            sig = sigma2[i][idx]
+            xx = y.iloc[idx, i].values
             if len(sig) == 0.0:
                 lls += 0.0
             else:
@@ -1211,10 +1231,118 @@ class Panel_GARCH_CSA_SLSQP(GarchBase):
                 
         return ret, sigma2, c
     
-    def forecast(self, y, H):
+    def forecast(self, y):
         row_nul = pd.DataFrame([[0]*y.shape[1]], columns = y.columns)
         y = y.append(row_nul)
         
         sigma2, _ = self.model_filter(self.optimized_params, y)
         forecast = sigma2[-1]
         return forecast
+    
+class Panel_GARCH_MIDAS_SLSQP(object):
+    def __init__(self, lag = 12, plot = True, exp = True, two_type = False, *args):
+        self.lag = lag
+        self.exp = exp
+        self.plot = plot
+        self.two_type = two_type
+        self.args = args
+        
+    def fit(self, restriction_midas, restriction_garch, X, y):
+        self.midas = Panel_MIDAS(lag = self.lag, plot = self.plot, exp = self.exp)
+        if self.plot == True:
+            print('Estimated parameters for the MIDAS equation:\n')
+        else:
+            pass
+        self.midas.fit(restriction_midas, X, y)
+
+        y_hat = self.calculate_y_hat(y, self.midas.tau_t)
+        
+        self.garch_1 = Panel_GARCH_SLSQP(plot = self.plot, dist = 'normal')
+        if self.plot == True:
+            print('\nEstimated parameters for the GARCH equation (Normal):\n')
+        else:
+            pass
+        if self.two_type == True:
+            self.garch_2 = Panel_GARCH_SLSQP(plot = self.plot, dist = 'student-t')
+            self.garch_1.fit(restriction_garch[:-1], y_hat)
+            if self.plot == True:
+                print('\nEstimated parameters for the GARCH equation (Student-t):\n')
+            else:
+                pass
+            self.garch_2.fit(restriction_garch, y_hat)
+        else:
+            self.garch_1.fit(restriction_garch, y_hat)
+        return
+            
+    def calculate_y_hat(self, y, tau):
+        y_hat = np.zeros_like(y)
+
+        for i in range(y.shape[0]):
+            for j in range(y.shape[1]):
+                y_hat[i][j] = y.iloc[i, j] / np.sqrt(tau[i])
+                
+        y_hat = pd.DataFrame(data = y_hat, index = y.index, columns = y.columns)
+
+        return y_hat
+    
+    def simulate(self, midas_params = [0.1, 0.3, 4.0], garch_params = [0.06, 0.8], num = 500, K = 12, panel = 100):
+        beta0, beta1, theta = midas_params[0], midas_params[1], midas_params[2]
+        alpha, beta = garch_params[0], garch_params[1]
+        X = np.zeros(num)
+        tau = np.zeros(num)
+        r = np.zeros((num * 22, panel))
+        g = np.zeros((num * 22, panel))
+        j = 0
+        month = []
+        m_dates = []
+        y_dates = []
+        
+        for t in range(num):
+            if t == 0:
+                X[t] = np.random.normal()
+            else:
+                X[t] = 0.9 * X[t - 1] + np.random.normal()
+                
+        for t in range(1, num + 1):
+            if t < K + 1:
+                tau[t - 1] = np.exp(beta0 + beta1 * Beta().x_weighted(X[:t][::-1].reshape((1, X[:t].shape[0])), [1.0, theta]))
+            else:
+                tau[t - 1] = np.exp(beta0 + beta1 * Beta().x_weighted(X[t - K : t][::-1].reshape((1, K)), [1.0, theta]))
+            
+            for i in range((t - 1) * 22, t * 22):
+                if i == 0:
+                    g[i] = np.ones(panel)
+                else:
+                    g[i] = (1 - alpha - beta) + alpha * (r[i - 1] ** 2) / tau[t - 1] + beta * g[i - 1]
+                
+                r[i] = np.random.normal(scale = np.sqrt(g[i] * tau[t - 1]), size = panel)
+        
+        for i in range(num):
+            month.append(i % 12)
+
+        for i in month:
+            if i == 0:
+                j += 1
+                m_dates.append(datetime(2010 + j, 1, 1))
+            else:
+                m_dates.append(datetime(2010 + j, 1 + i, 1))
+
+        for i in m_dates[:-1]:
+            for j in range(22):
+                y_dates.append(i + timedelta(j))   
+        
+        y = pd.DataFrame(data = r[:-22], index = y_dates)
+        X = pd.DataFrame(data = X, index = m_dates)
+        
+        return X, y, tau, g
+    
+    def forecast(self, y):
+        y_hat = self.calculate_y_hat(y * 100, self.midas.tau_t)
+        
+        if self.two_type == False:
+            forecast = self.garch_1.forecast(y_hat, 1) * self.midas.tau_t[-1]
+            return forecast
+        else:
+            forecast_norm = self.garch_1.forecast(y_hat, 1) * self.midas.tau_t[-1]
+            forecast_stud = self.garch_2.forecast(y_hat, 1) * self.midas.tau_t[-1]
+            return forecast_norm, forecast_stud

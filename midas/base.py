@@ -10,7 +10,7 @@ import numpy as np
 from scipy.optimize import minimize
 import scipy.stats as stats
 from abc import ABCMeta, abstractmethod
-from statsmodels.tools.numdiff import approx_fprime, approx_hess
+from statsmodels.tools.numdiff import approx_fprime, approx_hess_cs
 
 class BaseModel(object, metaclass = ABCMeta):
     def __init__(self, plot = True, *args):
@@ -139,20 +139,27 @@ class GarchBase(object, metaclass = ABCMeta):
                        options = {'disp': False})
         self.opt = res
         self.optimized_params = self.transform_back(self.opt.x, restrictions)
-        
-        hess = approx_hess(self.optimized_params, self.loglikelihood, kwargs = {'y' : y})
-        hess /= y.shape[0]
-        inv_hess = np.linalg.inv(hess)
-        scores = approx_fprime(self.optimized_params, self.loglikelihood, kwargs = {'y' : y})
-        score_cov = np.cov(scores.T)
-        self.cov_mat = inv_hess.dot(score_cov).dot(inv_hess) / y.shape[0]
-        self.standard_errors = np.sqrt(np.diag(self.cov_mat))
-        
-        self.table = pd.DataFrame(data = {'Parameters': self.optimized_params,
-                                         'Standard Error': self.standard_errors,
-                                         '95% CI Lower': self.optimized_params - stats.norm.ppf(0.975)* self.standard_errors,
-                                         '95% CI Higher': self.optimized_params - stats.norm.ppf(0.975)* self.standard_errors}, 
-                                  index = self.variables())
+        try:
+            hess = approx_hess_cs(self.optimized_params, self.loglikelihood, kwargs = {'y' : y})
+            hess /= y.shape[0]
+            inv_hess = np.linalg.inv(hess)
+            scores = approx_fprime(self.optimized_params, self.loglikelihood, kwargs = {'y' : y})
+            score_cov = np.cov(scores.T)
+            self.cov_mat = inv_hess.dot(score_cov).dot(inv_hess) / y.shape[0]
+            self.standard_errors = np.sqrt(np.diag(self.cov_mat))
+        except:
+            self.standard_errors = np.linspace(0, 0, len(self.optimized_params))
+        if self.variables() == None:
+            self.table = pd.DataFrame(data = {'Parameters': self.optimized_params,
+                                             'Standard Error': self.standard_errors,
+                                             '95% CI Lower': self.optimized_params - stats.norm.ppf(0.975)* self.standard_errors,
+                                             '95% CI Higher': self.optimized_params + stats.norm.ppf(0.975)* self.standard_errors})
+        else:
+            self.table = pd.DataFrame(data = {'Parameters': self.optimized_params,
+                                             'Standard Error': self.standard_errors,
+                                             '95% CI Lower': self.optimized_params - stats.norm.ppf(0.975)* self.standard_errors,
+                                             '95% CI Higher': self.optimized_params + stats.norm.ppf(0.975)* self.standard_errors}, 
+                                      index = self.variables())
         if self.plot == True:
             print('Loglikelihood: ', self.opt.fun, '\n')
             print(self.table)
