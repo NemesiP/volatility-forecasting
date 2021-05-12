@@ -870,11 +870,11 @@ class Panel_MIDAS(BaseModel):
                 
         for t in range(1, num + 1):
             if t < K + 1:
-                tau[t - 1] = params[0] + params[1] * Beta().x_weighted(X[:t][::-1].reshape((1, X[:t].shape[0])), [1.0, params[2]])
+                tau[t - 1] = np.exp(params[0] + params[1] * Beta().x_weighted(X[:t][::-1].reshape((1, X[:t].shape[0])), [1.0, params[2]]))
             else:
-                tau[t - 1] = params[0] + params[1] * Beta().x_weighted(X[t - K : t][::-1].reshape((1, K)), [1.0, params[2]])
+                tau[t - 1] = np.exp(params[0] + params[1] * Beta().x_weighted(X[t - K : t][::-1].reshape((1, K)), [1.0, params[2]]))
                 
-            r[(t - 1) * 22 : t * 22] = np.random.normal(scale = np.sqrt(np.exp(tau[t - 1])), size = (22, panel))
+            r[(t - 1) * 22 : t * 22] = np.random.normal(scale = np.sqrt(tau[t - 1]), size = (22, panel))
             
         
         for i in range(num):
@@ -896,12 +896,12 @@ class Panel_MIDAS(BaseModel):
         
         return X, y, tau
     
-    def create_sims(self, number_of_sims = 500, length = 100, K = 12, params = [0.1, 0.3, 4.0]):
+    def create_sims(self, number_of_sims = 500, length = 100, K = 12, params = [0.1, 0.3, 4.0], panel = 200):
         lls, b0, b1, th, runtime = np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims), np.zeros(number_of_sims)
         
         for i in range(number_of_sims):
             np.random.seed(i)
-            X, y, _ = self.simulate(params = params, num = length, K = K, panel = 100)
+            X, y, _ = self.simulate(params = params, num = length, K = K, panel = panel)
             start = time.time()
             self.fit(['pos', 'pos', 'pos'], X, y)
             runtime[i] = time.time() - start
@@ -1173,7 +1173,7 @@ class Panel_GARCH_CSA_SLSQP(GarchBase):
                     else:
                         sigma2[t][i] = mu[i]
             else:
-                c[t] = (1 - phi) + phi * np.nanstd(y[t - 1] / (sigma2[t - 1] * c[t - 1]))
+                c[t] = (1 - phi) + phi * np.nanstd(y[t - 1] / (np.sqrt(sigma2[t - 1]) * c[t - 1]))
                 for i in range(N):
                     if np.isnan(y[t][i]) == True:
                         if np.isnan(y[t - 1][i]) == True:
@@ -1182,7 +1182,7 @@ class Panel_GARCH_CSA_SLSQP(GarchBase):
                             sigma2[t][i] = mu[i]
                     else:
                         if np.isnan(sigma2[t - 1][i]) == False:
-                            sigma2[t][i] = mu[i] * (1 - alpha - beta) + alpha * (y[t - 1][i] / (sigma2[t - 1][i] * c[t - 1])) ** 2 + beta * sigma2[t - 1][i]
+                            sigma2[t][i] = mu[i] * (1 - alpha - beta) + alpha * (y[t - 1][i] / (np.sqrt(sigma2[t - 1][i]) * c[t - 1])) ** 2 + beta * sigma2[t - 1][i]
                         else:
                             sigma2[t][i] = mu[i]
                 
@@ -1193,7 +1193,7 @@ class Panel_GARCH_CSA_SLSQP(GarchBase):
         lls = 0
         sigma2 = sigma2.T
         for i in range(y.shape[1]):
-            idx = np.where(np.isnan(sigma2[i]) == False)[0]
+            idx = np.where(np.isnan(y.iloc[:, i]) == False)[0]
             sig = sigma2[i][idx]
             xx = y.iloc[idx, i].values
             if len(sig) == 0.0:

@@ -136,7 +136,7 @@ class GarchBase(object, metaclass = ABCMeta):
                        self.transform(self.initialize_params(), restrictions),
                        args = (restrictions, y),
                        method = 'SLSQP',
-                       options = {'disp': False})
+                       options = {'disp': False, 'maxiter': 50})
         self.opt = res
         self.optimized_params = self.transform_back(self.opt.x, restrictions)
         try:
