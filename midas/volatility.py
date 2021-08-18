@@ -1346,3 +1346,101 @@ class Panel_GARCH_MIDAS_SLSQP(object):
             forecast_norm = self.garch_1.forecast(y_hat, 1) * self.midas.tau_t[-1]
             forecast_stud = self.garch_2.forecast(y_hat, 1) * self.midas.tau_t[-1]
             return forecast_norm, forecast_stud
+
+class EWMA(BaseModel):
+    def __init__(self, plot = True, lam = 0.94, *args):
+        self.plot = plot
+        self.lam = 0.94
+        self.args = args
+    
+    def initialize_params(self, y):
+        self.init_params = np.array([self.lam])
+        return self.init_params
+    
+    def model_filter(self, params, y):
+        T = y.shape[0]
+        sigma2 = np.zeros(T)
+        lamb = params
+        
+        for t in range(T):
+            if t == 0:
+                sigma2[t] = np.nanmean(y ** 2)
+            else:
+                sigma2[t] = lamb * sigma2[t - 1] + (1 - lamb) * y[t - 1] ** 2
+        return sigma2
+    
+    def loglikelihood(self, params, y):
+        sigma2 = self.model_filter(params, y)
+        return loglikelihood_normal(y, sigma2)
+    
+    def simulate(self, lamb, T):
+        sigma2 = np.zeros(T)
+        ret = np.zeros(T)
+        
+        for t in range(T):
+            if t == 0:
+                sigma2[t] = 1.0
+            else:
+                sigma2[t] = lamb * sigma2[t - 1] + (1 - lamb) * ret[t - 1] ** 2
+            ret[t] = np.random.normal(scale = np.sqrt(sigma2[t]))
+            
+        return ret, sigma2
+    
+class Panel_EWMA(BaseModel):
+    def __init__(self, plot = True, lam = 0.94, *args):
+        self.plot = plot
+        self.lam = 0.94
+        self.args = args
+    
+    def initialize_params(self, y):
+        self.init_params = np.array([self.lam])
+        return self.init_params
+    
+    def model_filter(self, params, y):
+        T = y.shape[0]
+        sigma2 = np.zeros(T)
+        lamb = params
+        
+        for t in range(T):
+            if t == 0:
+                sigma2[t] = 1.0
+            else:
+                sigma2[t] = lamb * sigma2[t - 1] + (1 - lamb) * y[t - 1] ** 2
+        return sigma2
+    
+    def loglikelihood(self, params, y):
+        lls = 0
+        
+        for i in range(y.shape[1]):
+            idx = np.where(np.isnan(y.iloc[:, i]) == False)[0]
+            sig = self.model_filter(params, y.iloc[idx, i].values)
+            if len(sig) == 0:
+                lls += 0
+            else:
+                lls += loglikelihood_normal(y.iloc[idx, i].values, sig)
+        return lls
+    
+    def forecast(self, y):
+        row_nul = pd.DataFrame([[0]*y.shape[1]], columns = y.columns)
+        y = y.append(row_nul)
+        forecast = np.zeros(len(y.columns))
+        for i in range(ret_mat.shape[1]):
+            idx = np.where(np.isnan(y.iloc[:, i]) == False)[0]
+            if len(idx) == 0:
+                forecast[i] = np.nan
+            else:
+                sig = model.model_filter(model.optimized_params, y.iloc[idx, i].values)
+                forecast[i] = sig[-1]
+        return forecast
+    
+    def simulate(self, lamb = 0.94, T = 500, num = 100):
+        sigma2 = np.zeros((T, num))
+        r = np.zeros((T, num))
+        
+        for t in range(T):
+            if t == 0:
+                sigma2[t] = 1.0
+            else:
+                sigma2[t] = lamb * sigma2[t - 1] + (1 - lamb) * r[t - 1] ** 2
+            r[t] = np.random.normal(0.0, np.sqrt(sigma2[t]), size = num)
+        return r, sigma2
