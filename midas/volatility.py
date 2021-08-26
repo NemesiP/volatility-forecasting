@@ -594,12 +594,18 @@ class GARCH_MIDAS_sim(BaseModel):
         return X, r, tau, g, sigma2
     
 class Panel_GARCH(BaseModel):
-    def __init__(self, plot = True, *args):
+    def __init__(self, plot = True, dist = 'normal', *args):
         self.plot = plot
+        self.dist = dist
         self.args = args
     
     def initialize_params(self, X):
-        self.init_params = np.array([0.4, 0.4])
+        if self.dist == 'normal':
+            self.init_params = np.array([0.4, 0.4])
+        elif self.dist == 'student-t':
+            self.init_params = np.array([0.4, 0.4, 4.0])
+        else:
+            raise ValueError("ValueError exception thrown")
         return self.init_params
     
     def model_filter(self, params, X):
@@ -607,27 +613,26 @@ class Panel_GARCH(BaseModel):
         
         alpha, beta = params[0], params[1]
         
-        uncond_var = np.mean(X ** 2)
+        uncond_var = np.nanmean(X ** 2, axis = 0)
+        nans = X.isna().sum().values
+        X = X.values
         
-        for i in range(len(X)):
-            if i == 0:
-                sigma2[i] = uncond_var
-            else:
-                sigma2[i] = uncond_var * (1 - alpha - beta) + alpha * (X[i - 1] ** 2) + beta * sigma2[i - 1]
-        
+        for i in range(sigma2.shape[0]):
+            for j in range(sigma2.shape[1]):
+                if nans[j] == i:
+                    sigma2[i][j] = uncond_var[j]
+                elif nans[j] < i:
+                    sigma2[i][j] = uncond_var[j] * (1 - alpha - beta) + alpha * (X[i - 1][j] ** 2) + beta * sigma2[i - 1][j]
+                else:
+                    pass
         return sigma2
     
     def loglikelihood(self, params, X):
-        X_length, X_columns = X.shape
-        lls = 0
-        
-        for i in range(X.shape[1]):
-            xx = X.iloc[np.where(X.iloc[:, i].isna() == False)[0], i].values
-            if len(xx) == 0:
-                lls += 0.0
-            else:
-                sigma2 = self.model_filter(params, xx)
-                lls += loglikelihood_normal(xx, sigma2)
+        sigma2 = self.model_filter(params, X)
+        if self.dist == 'normal':
+            lls = loglikelihood_normal(X, sigma2).sum()
+        elif self.dist == 'student-t':
+            lls = loglikelihood_student_t(X, sigma2, params[2]).sum()
         return lls
     
     def simulate(self, params = [0.06, 0.91], num = 100, length = 1000):
@@ -644,61 +649,14 @@ class Panel_GARCH(BaseModel):
             r[t] = np.random.normal(0.0, np.sqrt(sigma2[t]))
         return sigma2, r
     
-    
     def forecast(self, X, H):
-        y_len, y_cols = X.shape
-        y_new = X
-        y_new[y_len] = 0
-        forecast = np.zeros(y_cols)
+        X_new = X
+        X_new.loc[X.shape[0]] = 0
         
-        for i in range(y_cols):
-            xx = y_new.iloc[np.where(y_new.iloc[:, i].isna() == False)[0], i].values
-            if len(xx) <= 1.0:
-                forecast[i] = np.nan
-            else:
-                sigma2 = self.model_filter(self.optimized_params, xx)
-                forecast[i] = sigma2[-1] * np.sqrt(H)
-        
-        return forecast
-    """
-    def forecast(self, y, H = 5, plotting = True):
-        from pandas.tseries.offsets import BDay
-        import matplotlib.pyplot as plt
-        forecast = np.zeros(H)
-        mu = np.mean(y ** 2)
-        alpha = self.optimized_params[0]
-        beta = self.optimized_params[1]
-        sigma2 = self.model_filter(self.optimized_params, y)
-        
-        for t in range(1, H + 1):
-            forecast[t - 1] = mu * (1 - (alpha + beta) ** (t - 1)) + (alpha + beta) ** (t - 1) * sigma2[-1]
-    
-        forc = np.zeros(len(y) + H)
-        forc[:-H] = sigma2
-        forc[-H:] = forecast
-        
-        if isinstance(y, pd.core.series.Series) or isinstance(y, pd.core.frame.DataFrame):
-            index = []
-            for i in range(len(y) + H):
-                if i < len(y):
-                    index.append(y.index[i])
-                else:
-                    index.append(y.index[-1] + BDay(i - len(y.index) + 1))
-    
-            forecasted_series = pd.Series(data = forc, index = index)
-            if plotting == True:
-                plt.figure(figsize = (15, 5))
-                plt.plot(forc[forc.index <= pd.to_datetime(y.index[-1])], 'g')
-                plt.plot(forc[forc.index > pd.to_datetime(y.index[-1])], 'r')
-                plt.title("Volatility Prediction for the next {} days".format(H))
-                plt.tight_layout()
-                plt.show()
-        else:
-            forecasted_series = forc
-        
-        return forecasted_series
-    """
-    
+        sigma2 = self.model_filter(self.optimized_params, X_new)
+        sigma2 = sigma2 * np.sqrt(H)
+        return sigma2[-1]
+
 class Panel_GARCH_CSA(BaseModel):
     """
     Panel GARCH with cross sectional adjustment
@@ -741,7 +699,7 @@ class Panel_GARCH_CSA(BaseModel):
                     else:
                         sigma2[t][i] = mu[i]
             else:
-                c[t] = (1 - phi) + phi * np.nanstd(y[t - 1] / (sigma2[t - 1] * c[t - 1]))
+                c[t] = (1 - phi) + phi * np.nanstd(y[t - 1] / (np.sqrt(sigma2[t - 1]) * c[t - 1]))
                 for i in range(N):
                     if np.isnan(y[t][i]) == True:
                         if np.isnan(y[t - 1][i]) == True:
@@ -750,7 +708,7 @@ class Panel_GARCH_CSA(BaseModel):
                             sigma2[t][i] = mu[i]
                     else:
                         if np.isnan(sigma2[t - 1][i]) == False:
-                            sigma2[t][i] = mu[i] * (1 - alpha - beta) + alpha * (y[t - 1][i] / (sigma2[t - 1][i] * c[t - 1])) ** 2 + beta * sigma2[t - 1][i]
+                            sigma2[t][i] = mu[i] * (1 - alpha - beta) + alpha * (y[t - 1][i] / (np.sqrt(sigma2[t - 1][i]) * c[t - 1])) ** 2 + beta * sigma2[t - 1][i]
                         else:
                             sigma2[t][i] = mu[i]
                 
@@ -1424,12 +1382,12 @@ class Panel_EWMA(BaseModel):
         row_nul = pd.DataFrame([[0]*y.shape[1]], columns = y.columns)
         y = y.append(row_nul)
         forecast = np.zeros(len(y.columns))
-        for i in range(ret_mat.shape[1]):
+        for i in range(y.shape[1]):
             idx = np.where(np.isnan(y.iloc[:, i]) == False)[0]
             if len(idx) == 0:
                 forecast[i] = np.nan
             else:
-                sig = model.model_filter(model.optimized_params, y.iloc[idx, i].values)
+                sig = self.model_filter(self.optimized_params, y.iloc[idx, i].values)
                 forecast[i] = sig[-1]
         return forecast
     
