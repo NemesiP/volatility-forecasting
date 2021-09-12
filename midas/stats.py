@@ -118,60 +118,7 @@ def parkinson_high_low(df):
     df['High_Low_Est'] = volatility.fillna(0)
     return df
 
-"""
-def dm_test(act, pred1, pred2, h = 1, crit = 'MSE', power = 2):
-    e1_lst, e2_lst, d_lst = [], [], []
-    
-    act_lst = np.asarray(act)
-    pred1_lst = np.asarray(pred1)
-    pred2_lst = np.asarray(pred2)
-    
-    T = float(len(act_lst))
-    for a, p1, p2 in zip(act_lst, pred1_lst, pred2_lst):
-        if crit == 'MSE':
-            e1_lst.append((a - p1) ** 2)
-            e2_lst.append((a - p2) ** 2)
-        elif crit == 'QLIKE':
-            e1_lst.append(np.log(p1) + a / pi)
-            e2_lst.append(np.log(p2) + a / pi)
-        elif crit == 'MAD':
-            e1_lst.append(np.abs(a - p1))
-            e2_lst.append(np.abs(a - p2))
-        elif crit == 'MAPE':
-            e1_lst.append(np.abs((a - p1)/a))
-            e2_lst.append(np.abs((a - p2)/a))
-        elif crit == 'poly':
-            e1_lst.append((a - p1) ** power)
-            e2_lst.append((a - p2) ** power)
-        else:
-            raise SyntaxError('This criterion is not supported!')
-            return
-    for e1, e2 in zip(e1_lst, e2_lst):
-        d_lst.append(e1 - e2)
-        
-    d_mean = np.mean(d_lst)
-    
-    def autocovariance(Xi, N, k, Xs):
-        autoCov = 0
-        T = float(N)
-        for i in np.arange(0, N - k):
-            autoCov += ((Xi[i + k]) - Xs) * (Xi[i] - Xs)
-        return autoCov / T
-    
-    gamma = []
-    
-    for lag in range(0, h):
-        gamma.append(autocovariance(d_lst, len(d_lst), lag, d_mean))
-    
-    V_d = (gamma[0] + 2 * np.sum(gamma[1:])) / T
-    DM_stat = d_mean * V_d ** -0.5
 
-    
-    p_value = 2 * t.cdf(-np.abs(DM_stat), df = T - 1)
-    
-    print('DM = ', DM_stat, '\nDM p_value', p_value)
-    return DM_stat, p_value, e1
-"""
 def dm_test(act, pred1, pred2, h = 1, degree = 0, plot = False):
     e1_lst, e2_lst, d_lst = [], [], []
     
