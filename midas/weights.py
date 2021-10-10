@@ -10,12 +10,17 @@ class WeightMethod(object, metaclass = ABCMeta):
     def weights(self):
         pass
 
-    def x_weighted(self, x, params):
-        try:
-            w = self.weights(params, x.shape[1])
-        except:
-            w = self.weights(params, 1)
-        
+    def x_weighted(self, x, params, arg = False):
+        if arg == False:
+            try:
+                w = self.weights(params, x.shape[1])
+            except:
+                w = self.weights(params, 1)
+        else:
+            try:
+                w = self.weights(params, x.shape[0])
+            except:
+                w = self.weights(params, 1)
         return np.matmul(x, w)
         
 class Beta(WeightMethod):
