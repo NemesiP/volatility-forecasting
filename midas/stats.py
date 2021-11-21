@@ -174,3 +174,44 @@ def dm_test(act, pred1, pred2, h = 1, degree = 0, plot = False):
     if plot == True:
         print('DM = ', DM_stat, '\nDM p_value', p_value)
     return DM_stat, p_value
+
+def family_of_loss_func(actual, predicted, degree):
+    """
+    Implemented from:
+    Patton, A. J., 2011. Volatility forecasting comparison using imperfect 
+    volatility proxies, Journal of Econometrics 160, 246-256.
+    """
+    if degree == -2:
+        # QLIKE
+        loss = actual / predicted - np.log(actual / predicted) - 1
+    elif degree == -1:
+        loss = predicted - actual + actual * np.log(actual / predicted)
+    else:
+        # MSE if degree = 0
+        loss = (np.sqrt(actual) ** (2 * degree + 4) - predicted ** (degree + 2)) / ((degree + 1) * (degree + 2))
+        loss -= (1 / (degree + 1)) * (predicted ** (degree + 1)) * (actual - predicted)
+    return loss
+
+def panel_DM(act, pred1, pred2, degree = 0):
+    """
+    Implemented from:
+    Timmermann, A., Zhu, Y., 2019. Comparing Forecasting Performance with Panel Data
+    """
+    l1 = family_of_loss_func(act, pred1, degree)
+    l2 = family_of_loss_func(act, pred2, degree)
+    d12 = l1 - l2
+    d12n = np.nansum(d12, axis = 1)
+    n = np.sum(~np.isnan(d12), axis = 1)
+    T = d12.shape[0]
+    nT = np.sum(~np.isnan(d12))
+    hat_d12 = np.nansum(d12, axis = 1) / np.sum(~np.isnan(d12), axis = 1)
+    R12 = np.sqrt(n) * hat_d12
+    hat_R0 = np.nansum(R12) / T
+    hat_R1 = np.nansum(R12[1:]) / (T - 1)
+    hat_R11 = np.nansum(R12[:-1]) / (T - 1)
+    g0 = np.nansum((R12 - hat_R0) * (R12 - hat_R0)) / T
+    g1 = 2 * np.nansum((R12[1:] - hat_R11) * (R12[:-1] - hat_R1)) / (T - 1)
+    sig = np.sqrt(g0 + g1)
+    DM = np.nansum(d12) / (np.sqrt(nT) * sig)
+    p_value = 2 * t.cdf(-np.abs(DM), df = nT - 1)
+    return DM, p_value
